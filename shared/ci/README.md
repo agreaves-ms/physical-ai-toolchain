@@ -49,7 +49,7 @@ shared/ci/smoke-import.sh rl --mode cpu
 
 | Domain       | Python | Runtime image                           | CPU smoke | Runtime-image smoke |
 |--------------|--------|-----------------------------------------|-----------|---------------------|
-| `rl`         | 3.11   | Isaac Lab (`DEFAULT_ISAAC_LAB_IMAGE`)   | yes       | yes                 |
+| `rl`         | 3.12   | Isaac Lab 3.0 (`DEFAULT_ISAAC_LAB_IMAGE`) | yes       | yes                 |
 | `il`         | 3.12   | PyTorch (`lerobot-train.yaml` default)  | yes       | yes                 |
 | `evaluation` | 3.12   | none (shares the Isaac Lab SiL runtime) | yes       | no                  |
 

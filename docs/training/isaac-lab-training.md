@@ -79,7 +79,7 @@ Core parameters shared across platforms:
 | `--task`           | `Isaac-Velocity-Rough-Anymal-C-v0` | Isaac Lab task identifier            |
 | `--num-envs`       | `2048`                             | Parallel simulation environments     |
 | `--max-iterations` | (unset)                            | Training iteration limit             |
-| `--image`          | `nvcr.io/nvidia/isaac-lab:2.3.2`   | Container image                      |
+| `--image`          | `nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1` | Container image                      |
 | `--backend`        | `skrl`                             | Training backend: `skrl` or `rsl_rl` |
 | `--headless`       | `true`                             | Disable rendering                    |
 
