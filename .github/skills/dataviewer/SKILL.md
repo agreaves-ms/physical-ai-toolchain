@@ -30,7 +30,7 @@ cd data-management/viewer && ./start.sh
 With a custom dataset path:
 
 ```bash
-cd data-management/viewer && DATA_DIR=/path/to/datasets ./start.sh
+cd data-management/viewer && ./start.sh --data-dir /path/to/datasets
 ```
 
 ### Step 2 — Open SimpleBrowser
@@ -99,7 +99,7 @@ cd data-management/viewer && ./start.sh
 Start with a custom dataset path:
 
 ```bash
-cd data-management/viewer && DATA_DIR=/path/to/datasets ./start.sh
+cd data-management/viewer && ./start.sh --data-dir /path/to/datasets
 ```
 
 ## Parameters Reference
@@ -115,32 +115,42 @@ cd data-management/viewer && DATA_DIR=/path/to/datasets ./start.sh
 
 The `DATA_DIR` environment variable controls which datasets are visible in the app. Each subdirectory under this path is treated as a separate `dataset_id`.
 
-**Methods to set `DATA_DIR`:**
+Use one of these methods to set `DATA_DIR`.
 
-1. **Environment variable override** (recommended for ad-hoc use):
+### Launch argument
 
-    ```bash
-    DATA_DIR=/path/to/datasets ./start.sh
-    ```
+Use this method for workflow handoff and ad-hoc sessions:
 
-2. **Edit `backend/.env`** (persists across restarts):
+```bash
+./start.sh --data-dir /path/to/datasets
+```
 
-    ```env
-    DATA_DIR=/path/to/datasets
-    ```
+### Backend environment file
 
-3. **Export before launch** (session-scoped):
+Use this method only when a persistent local default is requested:
 
-    ```bash
-    export DATA_DIR=/path/to/datasets
-    cd data-management/viewer && ./start.sh
-    ```
+```env
+DATA_DIR=/path/to/datasets
+```
 
-When a dataset path is provided, update `backend/.env` so the value persists:
+### Session environment
 
-1. Read the current `backend/.env` file.
-2. Replace the `DATA_DIR=` line with the new absolute path.
-3. Start the app with `./start.sh`.
+Use this method for a shell-scoped override:
+
+```bash
+export DATA_DIR=/path/to/datasets
+cd data-management/viewer && ./start.sh
+```
+
+Persist a path in `backend/.env` only when the user explicitly requests a local default
+across restarts. Do not mutate `.env` for a profile-bound workflow handoff. The workflow
+owns the viewer child and passes the manifest's exact dataset parent through
+`--data-dir`.
+
+When `accepted-dataset.json` exists, verify the dataset capabilities before browser
+inspection. Require the returned dataset ID, output adapter/version, viewer adapter,
+profile ID/hash, capture-provenance hash, export-validation hash, capture features, and
+sensor roles to match the descriptor.
 
 ## Architecture
 
@@ -176,7 +186,8 @@ data-management/viewer/
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/api/datasets` | GET | List all datasets |
-| `/api/datasets/{id}` | GET | Get dataset metadata and capabilities |
+| `/api/datasets/{id}` | GET | Get dataset metadata |
+| `/api/datasets/{id}/capabilities` | GET | Get format support, optional feature availability, and verified accepted-dataset contract |
 | `/api/datasets/{id}/episodes` | GET | List episodes in a dataset |
 | `/api/datasets/{id}/episodes/{idx}` | GET | Get episode data with trajectory and metadata |
 | `/api/datasets/{id}/episodes/{idx}/trajectory` | GET | Get trajectory data only |
@@ -199,8 +210,8 @@ data-management/viewer/
 ### VLM-as-Judge Endpoints
 
 > [!NOTE]
-> Mounted only when `VLM_JUDGE_ENABLED=true` in `backend/.env`. The frontend's
-> JudgePanel auto-hides when the backend reports `enabled: false`.
+> Mounted only when `VLM_JUDGE_ENABLED=true`. Dataset capabilities advertise this
+> state, and the frontend does not request an episode judge status while disabled.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -328,9 +339,9 @@ Analyze gripper and joint data at multiple time points to classify episodes. Che
 # Example: check grip values at multiple points for robust classification
 for pct in [25, 50, 75]:
     idx = int(len(traj) * pct / 100)
-    jp = traj[idx]['joint_positions']
-    right_grip = jp[7]   # Right arm gripper index
-    left_grip = jp[15]   # Left arm gripper index
+    jp = traj[idx]["joint_positions"]
+    right_grip = jp[7]  # Right arm gripper index
+    left_grip = jp[15]  # Left arm gripper index
 ```
 
 > [!IMPORTANT]
@@ -351,12 +362,15 @@ For bulk annotation, loop over episodes in a script:
 ```python
 import json, urllib.request
 
+
 def annotate(dataset_id, episode_idx, labels):
     data = json.dumps({"labels": labels}).encode()
     req = urllib.request.Request(
         f"http://localhost:8000/api/datasets/{dataset_id}/episodes/{episode_idx}/labels",
-        data=data, method="PUT",
-        headers={"Content-Type": "application/json"})
+        data=data,
+        method="PUT",
+        headers={"Content-Type": "application/json"},
+    )
     return json.loads(urllib.request.urlopen(req).read())
 ```
 

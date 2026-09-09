@@ -6,6 +6,8 @@ episode data retrieval, trajectory extraction, and capability reporting.
 """
 
 import asyncio
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -72,6 +74,59 @@ class TestDatasetDiscovery:
 
     def test_has_lerobot_support(self, service):
         assert service.has_lerobot_support() is True
+
+    def test_dataset_contract_requires_matching_artifact_hashes(self, tmp_path: Path):
+        dataset_id = "accepted-dataset"
+        dataset_path = tmp_path / dataset_id
+        dataset_path.mkdir()
+        provenance_path = dataset_path / "capture-provenance.json"
+        validation_path = dataset_path / "export-validation.json"
+        provenance_path.write_text('{"profile_id":"profile-alpha"}', encoding="utf-8")
+        validation_path.write_text('{"status":"pass"}', encoding="utf-8")
+
+        def digest(path: Path) -> str:
+            with path.open("rb") as stream:
+                return hashlib.file_digest(stream, "sha256").hexdigest()
+
+        descriptor = {
+            "schema_version": 1,
+            "dataset_id": dataset_id,
+            "output_adapter_id": "lerobot_v3",
+            "output_adapter_version": "0.6.0",
+            "viewer_adapter_id": "dataviewer_v1",
+            "profile_id": "profile-alpha",
+            "profile_sha256": "a" * 64,
+            "capture_features": [{"feature_id": "state-alpha", "kind": "observation_state"}],
+            "sensors": [{"sensor_id": "view-alpha", "media_kind": "rgb"}],
+            "artifacts": {
+                "capture_provenance": {
+                    "file": provenance_path.name,
+                    "sha256": digest(provenance_path),
+                },
+                "export_validation": {
+                    "file": validation_path.name,
+                    "sha256": digest(validation_path),
+                },
+            },
+        }
+        (dataset_path / "accepted-dataset.json").write_text(json.dumps(descriptor), encoding="utf-8")
+        contract_service = DatasetService(base_path=str(tmp_path))
+
+        assert contract_service.get_dataset_contract(dataset_id) == {
+            "dataset_id": dataset_id,
+            "output_adapter_id": "lerobot_v3",
+            "output_adapter_version": "0.6.0",
+            "viewer_adapter_id": "dataviewer_v1",
+            "profile_id": "profile-alpha",
+            "profile_sha256": "a" * 64,
+            "capture_provenance_sha256": digest(provenance_path),
+            "export_validation_sha256": digest(validation_path),
+            "capture_features": descriptor["capture_features"],
+            "sensors": descriptor["sensors"],
+        }
+
+        provenance_path.write_text("changed", encoding="utf-8")
+        assert contract_service.get_dataset_contract(dataset_id) is None
 
 
 class TestListEpisodes:

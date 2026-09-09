@@ -17,12 +17,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/isaac_python_prologue.sh"
 
 configure_uv() {
   local resolved_env
+  local site_packages
   resolved_env="$("${python_cmd[@]}" -c 'import sys; print(sys.prefix)' 2>/dev/null || true)"
+  site_packages="$("${python_cmd[@]}" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
   export UV_PYTHON="${python_exec}"
-  if [[ -n "${resolved_env}" && -d "${resolved_env}" ]]; then
+  if [[ -n "${resolved_env}" && -d "${resolved_env}" && -w "${site_packages}" ]]; then
     export UV_PROJECT_ENVIRONMENT="${resolved_env}"
     echo "uv configured with Python: ${python_exec}, environment: ${resolved_env}"
   else
+    unset UV_PROJECT_ENVIRONMENT
     echo "uv configured with Python: ${python_exec}"
   fi
 }
@@ -58,8 +61,16 @@ if command -v uv &>/dev/null; then
     | grep -Ev "${isaac_provided_re}" >"${reqs_file}"
   if [[ -n "${VIRTUAL_ENV:-}" ]]; then
     uv pip install --no-cache-dir --no-deps --requirement "${reqs_file}"
-  else
+  elif [[ -w "$("${python_cmd[@]}" -c 'import site; print(site.getsitepackages()[0])')" ]]; then
     uv pip install --no-cache-dir --no-deps --system --requirement "${reqs_file}"
+  else
+    runtime_site_packages="${ISAAC_RUNTIME_SITE_PACKAGES:-/tmp/isaac-runtime-site-packages}"
+    rm -rf "${runtime_site_packages}"
+    mkdir -p "${runtime_site_packages}"
+    uv pip install --no-cache-dir --no-deps \
+      --target "${runtime_site_packages}" --requirement "${reqs_file}"
+    export PYTHONPATH="${runtime_site_packages}:${PYTHONPATH}"
+    echo "Installed workflow dependencies into writable overlay: ${runtime_site_packages}"
   fi
   rm -f "${reqs_file}"
 else

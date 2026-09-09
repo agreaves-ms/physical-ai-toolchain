@@ -1,4 +1,4 @@
-import { Activity, Download, RotateCcw, SkipBack, SkipForward } from 'lucide-react'
+import { Activity, Download, RotateCcw, Save, SkipBack, SkipForward } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -64,12 +64,13 @@ export function AnnotationWorkspaceTopBar({
               <Download className="mr-2 h-4 w-4" />
               Export
             </Button>
-            <Button
-              onClick={onSaveAndNextEpisode}
-              disabled={!canGoNextEpisode || !canSaveAndNextEpisode}
-            >
-              <SkipForward className="mr-2 h-4 w-4" />
-              Save & Next Episode
+            <Button onClick={onSaveAndNextEpisode} disabled={!canSaveAndNextEpisode}>
+              {canGoNextEpisode ? (
+                <SkipForward className="mr-2 h-4 w-4" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              {canGoNextEpisode ? 'Save & Next Episode' : 'Save Episode'}
             </Button>
           </div>
           <div className="min-h-[1rem] xl:text-right" data-testid="workspace-save-status-slot">

@@ -34,6 +34,7 @@ bld/
 [Oo]ut/
 [Ll]og/
 [Ll]ogs/
+data-management/sim-viewer/dist/
 
 # Build results on 'Bin' directories
 **/[Bb]in/*
@@ -464,6 +465,9 @@ venv/
 **/out/*
 .copilot-tracking/
 
+# Isaac Sim assets
+.isaac-sim-assets/
+
 # Environment-specific deployment artifacts
 infrastructure/setup/generated/
 infrastructure/setup/config/out/
@@ -485,3 +489,4 @@ AGENTS.md
 envs/
 
 datasets/
+local/

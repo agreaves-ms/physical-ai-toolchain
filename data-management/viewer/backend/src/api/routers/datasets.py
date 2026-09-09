@@ -7,11 +7,13 @@ and accessing episode information with HDF5 and LeRobot parquet support.
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from ..config import AppConfig, get_app_config
 from ..models.datasources import DatasetInfo, EpisodeData, EpisodeMeta, TrajectoryPoint
 from ..services.dataset_service import DatasetService, get_dataset_service
 from ..services.video_transcode import ensure_browser_compatible
@@ -27,6 +29,21 @@ from ..validation import (
 )
 
 router = APIRouter()
+
+
+class AcceptedDatasetContract(BaseModel):
+    """Verified output-adapter and capture provenance for one dataset."""
+
+    dataset_id: str
+    output_adapter_id: str
+    output_adapter_version: str
+    viewer_adapter_id: str
+    profile_id: str
+    profile_sha256: str
+    capture_provenance_sha256: str
+    export_validation_sha256: str
+    capture_features: list[dict[str, Any]]
+    sensors: list[dict[str, Any]]
 
 
 class DatasetCapabilities(BaseModel):
@@ -46,6 +63,12 @@ class DatasetCapabilities(BaseModel):
 
     episode_count: int
     """Number of episodes detected."""
+
+    dataset_contract: AcceptedDatasetContract | None = None
+    """Verified accepted-dataset contract when the output adapter emitted one."""
+
+    vlm_judge_enabled: bool
+    """Whether the optional VLM judge API is mounted."""
 
 
 @router.get("", response_model=list[DatasetInfo])
@@ -82,6 +105,7 @@ async def get_dataset(
 async def get_dataset_capabilities(
     dataset_id: str = Depends(path_string_param("dataset_id", pattern=SAFE_DATASET_ID_PATTERN, label="dataset_id")),
     service: DatasetService = Depends(get_dataset_service),
+    config: AppConfig = Depends(get_app_config),
 ) -> DatasetCapabilities:
     """
     Get capabilities and format support status for a dataset.
@@ -102,6 +126,8 @@ async def get_dataset_capabilities(
         lerobot_support=service.has_lerobot_support(),
         is_lerobot_dataset=is_lerobot,
         episode_count=episode_count,
+        dataset_contract=service.get_dataset_contract(dataset_id),
+        vlm_judge_enabled=config.vlm_judge_enabled,
     )
 
 

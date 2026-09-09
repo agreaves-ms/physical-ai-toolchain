@@ -46,7 +46,13 @@ override-dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "training/tests", "data-management/tools/tests", "fleet-deployment/inference/tests", "shared/ci/tests"]
+testpaths = [
+    "tests",
+    "training/tests",
+    "data-management/tools/tests",
+    "fleet-deployment/inference/tests",
+    "shared/ci/tests",
+]
 pythonpath = [".", "data-management/tools"]
 python_files = ["test_*.py", "fuzz_harness.py"]
 addopts = [
@@ -80,6 +86,7 @@ max_examples = 50
 deadline = 500
 
 [tool.ruff]
+required-version = ">=0.16.0"
 target-version = "py312"
 line-length = 120
 

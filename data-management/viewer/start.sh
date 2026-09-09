@@ -202,6 +202,7 @@ start_backend() {
 
 start_frontend() {
     log_info "Starting frontend on port ${FRONTEND_PORT}..."
+    local frontend_api_base_url="${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT}}"
 
     if [[ ! -d "${FRONTEND_DIR}/node_modules" ]]; then
         log_warn "node_modules not found"
@@ -211,7 +212,8 @@ start_frontend() {
 
     (
         cd "${FRONTEND_DIR}"
-        npm run dev -- --port "${FRONTEND_PORT}" 2>&1
+        VITE_API_BASE_URL="${frontend_api_base_url}" \
+            npm run dev -- --port "${FRONTEND_PORT}" 2>&1
     ) &
     FRONTEND_PID=$!
 

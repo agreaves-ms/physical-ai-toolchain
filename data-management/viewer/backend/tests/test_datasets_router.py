@@ -43,6 +43,7 @@ def mock_service() -> MagicMock:
     svc.get_blob_video_stream = AsyncMock(return_value=None)
     svc.dataset_has_hdf5 = MagicMock(return_value=False)
     svc.dataset_is_lerobot = MagicMock(return_value=True)
+    svc.get_dataset_contract = MagicMock(return_value=None)
     svc.has_hdf5_support = MagicMock(return_value=True)
     svc.has_lerobot_support = MagicMock(return_value=True)
     svc._episode_cache = MagicMock()
@@ -116,6 +117,20 @@ class TestCapabilities:
         override_service.get_dataset = AsyncMock(return_value=_make_dataset("ds-1", total=7))
         override_service.dataset_has_hdf5 = MagicMock(return_value=True)
         override_service.dataset_is_lerobot = MagicMock(return_value=False)
+        override_service.get_dataset_contract = MagicMock(
+            return_value={
+                "dataset_id": "ds-1",
+                "output_adapter_id": "lerobot_v3",
+                "output_adapter_version": "0.6.0",
+                "viewer_adapter_id": "dataviewer_v1",
+                "profile_id": "profile-alpha",
+                "profile_sha256": "a" * 64,
+                "capture_provenance_sha256": "b" * 64,
+                "export_validation_sha256": "c" * 64,
+                "capture_features": [{"feature_id": "state-alpha", "kind": "observation_state"}],
+                "sensors": [{"sensor_id": "view-alpha", "media_kind": "rgb"}],
+            }
+        )
         resp = client.get("/api/datasets/ds-1/capabilities")
         assert resp.status_code == 200
         body = resp.json()
@@ -124,6 +139,19 @@ class TestCapabilities:
         assert body["is_lerobot_dataset"] is False
         assert body["hdf5_support"] is True
         assert body["lerobot_support"] is True
+        assert body["vlm_judge_enabled"] is False
+        assert body["dataset_contract"] == {
+            "dataset_id": "ds-1",
+            "output_adapter_id": "lerobot_v3",
+            "output_adapter_version": "0.6.0",
+            "viewer_adapter_id": "dataviewer_v1",
+            "profile_id": "profile-alpha",
+            "profile_sha256": "a" * 64,
+            "capture_provenance_sha256": "b" * 64,
+            "export_validation_sha256": "c" * 64,
+            "capture_features": [{"feature_id": "state-alpha", "kind": "observation_state"}],
+            "sensors": [{"sensor_id": "view-alpha", "media_kind": "rgb"}],
+        }
 
     def test_capabilities_without_dataset_reports_zero_episodes(self, client: TestClient, override_service) -> None:
         override_service.get_dataset = AsyncMock(return_value=None)

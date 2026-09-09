@@ -195,6 +195,29 @@ describe('AnnotationWorkspace status and header actions', () => {
     expect(handleSaveAndNextEpisode).toHaveBeenCalledTimes(1)
   })
 
+  it('saves labels on the final episode without advancing', async () => {
+    const handleSaveAndNextEpisode = vi.fn()
+    testState.episodeLabels = { 0: [] }
+    testState.savedEpisodeLabels = { 0: [] }
+    const { rerender } = render(
+      <AnnotationWorkspace onSaveAndNextEpisode={handleSaveAndNextEpisode} />,
+    )
+
+    testState.episodeLabels = { 0: ['SUCCESS'] }
+    rerender(<AnnotationWorkspace onSaveAndNextEpisode={handleSaveAndNextEpisode} />)
+
+    const saveButton = screen.getByRole('button', { name: /^save episode$/i })
+    expect(saveButton).toBeEnabled()
+
+    await act(async () => {
+      fireEvent.click(saveButton)
+      await Promise.resolve()
+    })
+
+    expect(mockSaveEpisodeLabels).toHaveBeenCalledWith({ episodeIdx: 0, labels: ['SUCCESS'] })
+    expect(handleSaveAndNextEpisode).not.toHaveBeenCalled()
+  })
+
   it('resets labels back to the original episode labels without saving when Reset All is clicked', async () => {
     const { rerender } = render(<AnnotationWorkspace />)
 

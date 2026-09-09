@@ -6,6 +6,8 @@ implementations (LeRobot, HDF5) and manages blob storage integration.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import shutil
@@ -755,6 +757,62 @@ class DatasetService:
     def dataset_is_lerobot(self, dataset_id: str) -> bool:
         """Check if a dataset is in LeRobot parquet format."""
         return self._lerobot_handler.has_loader(dataset_id)
+
+    def get_dataset_contract(self, dataset_id: str) -> dict[str, object] | None:
+        """Return a verified accepted-dataset descriptor when one is present."""
+        try:
+            dataset_path = self._get_dataset_path(dataset_id)
+            descriptor_path = dataset_path / "accepted-dataset.json"
+            if not descriptor_path.is_file():
+                return None
+            descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+            if not isinstance(descriptor, dict) or descriptor.get("schema_version") != 1:
+                raise ValueError("unsupported accepted-dataset descriptor schema")
+            if descriptor.get("dataset_id") != dataset_id:
+                raise ValueError("accepted-dataset descriptor ID differs from its directory")
+            artifacts = descriptor.get("artifacts")
+            if not isinstance(artifacts, dict):
+                raise ValueError("accepted-dataset descriptor has no artifact identities")
+            expected_files = {
+                "capture_provenance": "capture-provenance.json",
+                "export_validation": "export-validation.json",
+            }
+            hashes = {}
+            for name, filename in expected_files.items():
+                identity = artifacts.get(name)
+                if not isinstance(identity, dict) or identity.get("file") != filename:
+                    raise ValueError(f"accepted-dataset {name} identity is invalid")
+                path = dataset_path / filename
+                if not path.is_file():
+                    raise ValueError(f"accepted-dataset artifact is missing: {filename}")
+                with path.open("rb") as stream:
+                    actual_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+                if identity.get("sha256") != actual_hash:
+                    raise ValueError(f"accepted-dataset artifact hash differs: {filename}")
+                hashes[name] = actual_hash
+            capture_features = descriptor.get("capture_features")
+            sensors = descriptor.get("sensors")
+            if not isinstance(capture_features, list) or not isinstance(sensors, list):
+                raise ValueError("accepted-dataset features or sensors are invalid")
+            return {
+                "dataset_id": dataset_id,
+                "output_adapter_id": descriptor.get("output_adapter_id"),
+                "output_adapter_version": descriptor.get("output_adapter_version"),
+                "viewer_adapter_id": descriptor.get("viewer_adapter_id"),
+                "profile_id": descriptor.get("profile_id"),
+                "profile_sha256": descriptor.get("profile_sha256"),
+                "capture_provenance_sha256": hashes["capture_provenance"],
+                "export_validation_sha256": hashes["export_validation"],
+                "capture_features": capture_features,
+                "sensors": sensors,
+            }
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            logger.warning(
+                "Ignoring invalid accepted-dataset contract for '%s': %s",
+                dataset_id.replace("\r", "").replace("\n", ""),
+                error,
+            )
+            return None
 
     # ------------------------------------------------------------------
     # Path and media helpers
