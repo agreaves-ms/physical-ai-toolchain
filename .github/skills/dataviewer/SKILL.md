@@ -9,9 +9,9 @@ Launch and interact with the Dataset Analysis Tool — a full-stack application 
 
 ## Prerequisites
 
-| Platform | Requirement |
-|----------|-------------|
-| All | Python 3.12+, Node.js 18+, npm, `uv` |
+| Platform | Requirement                          |
+|----------|--------------------------------------|
+| All      | Python 3.12+, Node.js 18+, npm, `uv` |
 
 The backend virtual environment and frontend `node_modules` are auto-created on first launch by `start.sh`.
 
@@ -22,6 +22,8 @@ Follow these steps in order every time the dataviewer is started.
 ### Step 1 — Start the app
 
 Launch `start.sh` as a background terminal process. The script prints `[OK] Both services are running` and the URLs when both services are healthy.
+
+Use `./start.sh --check` to check installed launch prerequisites without starting or installing services. The launcher binds both services to loopback, requires the selected frontend port and returns failure when either service fails readiness.
 
 ```bash
 cd data-management/viewer && ./start.sh
@@ -78,13 +80,13 @@ Playwright operates headlessly on the same URL as SimpleBrowser. Both see the sa
 
 Once the tools are available, use the following patterns for all UI interaction:
 
-| Action | Playwright MCP Tool | Notes |
-|--------|-------------------|-------|
-| Capture page state | `browser_snapshot` | Call first before any click/type to orient |
-| Navigate to URL | `browser_navigate` | Use to reload or go to a route |
-| Click an element | `browser_click` | Target `aside li button` for episodes |
-| Type into input | `browser_type` | For search or label inputs |
-| Take a screenshot | `browser_take_screenshot` | Use to verify visual state |
+| Action             | Playwright MCP Tool       | Notes                                      |
+|--------------------|---------------------------|--------------------------------------------|
+| Capture page state | `browser_snapshot`        | Call first before any click/type to orient |
+| Navigate to URL    | `browser_navigate`        | Use to reload or go to a route             |
+| Click an element   | `browser_click`           | Target `aside li button` for episodes      |
+| Type into input    | `browser_type`            | For search or label inputs                 |
+| Take a screenshot  | `browser_take_screenshot` | Use to verify visual state                 |
 
 Always call `browser_snapshot` first to inspect the current DOM before issuing click or type actions. Reference the selector patterns in the [Frontend UI Structure](#frontend-ui-structure) section below.
 
@@ -104,12 +106,12 @@ cd data-management/viewer && ./start.sh --data-dir /path/to/datasets
 
 ## Parameters Reference
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `DATA_DIR` | `../../../datasets` (relative to `backend/`) | Directory containing dataset subdirectories |
-| `BACKEND_PORT` | `8000` | FastAPI backend port |
-| `FRONTEND_PORT` | `5173` | Vite frontend dev server port |
-| `HEALTH_TIMEOUT` | `30` | Seconds to wait for backend health check |
+| Parameter        | Default                                      | Description                                 |
+|------------------|----------------------------------------------|---------------------------------------------|
+| `DATA_DIR`       | `../../../datasets` (relative to `backend/`) | Directory containing dataset subdirectories |
+| `BACKEND_PORT`   | `8000`                                       | FastAPI backend port                        |
+| `FRONTEND_PORT`  | `5173`                                       | Vite frontend dev server port               |
+| `HEALTH_TIMEOUT` | `30`                                         | Seconds to wait for backend health check    |
 
 ### Dataset Path Configuration
 
@@ -182,30 +184,30 @@ data-management/viewer/
 
 ### Core Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/api/datasets` | GET | List all datasets |
-| `/api/datasets/{id}` | GET | Get dataset metadata |
-| `/api/datasets/{id}/capabilities` | GET | Get format support, optional feature availability, and verified accepted-dataset contract |
-| `/api/datasets/{id}/episodes` | GET | List episodes in a dataset |
-| `/api/datasets/{id}/episodes/{idx}` | GET | Get episode data with trajectory and metadata |
-| `/api/datasets/{id}/episodes/{idx}/trajectory` | GET | Get trajectory data only |
-| `/api/datasets/{id}/episodes/{idx}/frames/{frame}` | GET | Get a single frame image |
-| `/api/datasets/{id}/episodes/{idx}/cameras` | GET | List available camera views |
-| `/api/datasets/{id}/episodes/{idx}/video/{camera}` | GET | Stream video for a camera |
-| `http://localhost:8000/docs` | GET | Swagger UI documentation |
+| Endpoint                                           | Method | Description                                                                               |
+|----------------------------------------------------|--------|-------------------------------------------------------------------------------------------|
+| `/health`                                          | GET    | Health check                                                                              |
+| `/api/datasets`                                    | GET    | List all datasets                                                                         |
+| `/api/datasets/{id}`                               | GET    | Get dataset metadata                                                                      |
+| `/api/datasets/{id}/capabilities`                  | GET    | Get format support, optional feature availability, and verified accepted-dataset contract |
+| `/api/datasets/{id}/episodes`                      | GET    | List episodes in a dataset                                                                |
+| `/api/datasets/{id}/episodes/{idx}`                | GET    | Get episode data with trajectory and metadata                                             |
+| `/api/datasets/{id}/episodes/{idx}/trajectory`     | GET    | Get trajectory data only                                                                  |
+| `/api/datasets/{id}/episodes/{idx}/frames/{frame}` | GET    | Get a single frame image                                                                  |
+| `/api/datasets/{id}/episodes/{idx}/cameras`        | GET    | List available camera views                                                               |
+| `/api/datasets/{id}/episodes/{idx}/video/{camera}` | GET    | Stream video for a camera                                                                 |
+| `http://localhost:8000/docs`                       | GET    | Swagger UI documentation                                                                  |
 
 ### Label Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/datasets/{id}/labels` | GET | Get all episode labels and available label options |
-| `/api/datasets/{id}/labels/options` | GET | List available label options |
-| `/api/datasets/{id}/labels/options` | POST | Add a new label option (`{"label": "NAME"}`) |
-| `/api/datasets/{id}/episodes/{idx}/labels` | GET | Get labels for one episode |
-| `/api/datasets/{id}/episodes/{idx}/labels` | PUT | Set labels for one episode (`{"labels": ["A", "B"]}`) |
-| `/api/datasets/{id}/labels/save` | POST | Persist all labels to disk |
+| Endpoint                                   | Method | Description                                           |
+|--------------------------------------------|--------|-------------------------------------------------------|
+| `/api/datasets/{id}/labels`                | GET    | Get all episode labels and available label options    |
+| `/api/datasets/{id}/labels/options`        | GET    | List available label options                          |
+| `/api/datasets/{id}/labels/options`        | POST   | Add a new label option (`{"label": "NAME"}`)          |
+| `/api/datasets/{id}/episodes/{idx}/labels` | GET    | Get labels for one episode                            |
+| `/api/datasets/{id}/episodes/{idx}/labels` | PUT    | Set labels for one episode (`{"labels": ["A", "B"]}`) |
+| `/api/datasets/{id}/labels/save`           | POST   | Persist all labels to disk                            |
 
 ### VLM-as-Judge Endpoints
 
@@ -213,10 +215,10 @@ data-management/viewer/
 > Mounted only when `VLM_JUDGE_ENABLED=true`. Dataset capabilities advertise this
 > state, and the frontend does not request an episode judge status while disabled.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/datasets/{id}/episodes/{idx}/judge` | GET  | Cache lookup: returns any persisted judgment for the episode without invoking the model |
-| `/api/datasets/{id}/episodes/{idx}/judge` | POST | Run the multi-step judge (cache-first unless `force: true`); body: `{instruction?, views?, force?}` |
+| Endpoint                                  | Method | Description                                                                                         |
+|-------------------------------------------|--------|-----------------------------------------------------------------------------------------------------|
+| `/api/datasets/{id}/episodes/{idx}/judge` | GET    | Cache lookup: returns any persisted judgment for the episode without invoking the model             |
+| `/api/datasets/{id}/episodes/{idx}/judge` | POST   | Run the multi-step judge (cache-first unless `force: true`); body: `{instruction?, views?, force?}` |
 
 `POST` response (snake_case on the wire, camelCased by the frontend client) is the composite `JudgeResult`:
 
@@ -242,37 +244,37 @@ data-management/viewer/
 
 Key knobs (`backend/.env`):
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `VLM_JUDGE_ENABLED` | `false` | Mount the router |
-| `VLM_JUDGE_BACKEND` | `echo` | `qwen3-vl` (local HF) / `openai-compat` (vLLM, NIM, AOAI) / `echo` (offline) |
-| `VLM_JUDGE_MODEL_ID` | `Qwen/Qwen3-VL-4B-Instruct` | HF id or remote model name |
-| `VLM_JUDGE_BASE_URL` | _(unset)_ | OpenAI-compatible server URL (`openai-compat` only) |
-| `VLM_JUDGE_API_KEY` | _(unset)_ | Bearer token for the remote backend |
-| `VLM_JUDGE_N_FRAMES` | `12` | Frames sampled per episode |
-| `VLM_JUDGE_CACHE_DIR` | `outputs/vlm-judge/cache` | SHA256-keyed result cache; empty disables disk cache |
+| Variable              | Default                     | Purpose                                                                      |
+|-----------------------|-----------------------------|------------------------------------------------------------------------------|
+| `VLM_JUDGE_ENABLED`   | `false`                     | Mount the router                                                             |
+| `VLM_JUDGE_BACKEND`   | `echo`                      | `qwen3-vl` (local HF) / `openai-compat` (vLLM, NIM, AOAI) / `echo` (offline) |
+| `VLM_JUDGE_MODEL_ID`  | `Qwen/Qwen3-VL-4B-Instruct` | HF id or remote model name                                                   |
+| `VLM_JUDGE_BASE_URL`  | _(unset)_                   | OpenAI-compatible server URL (`openai-compat` only)                          |
+| `VLM_JUDGE_API_KEY`   | _(unset)_                   | Bearer token for the remote backend                                          |
+| `VLM_JUDGE_N_FRAMES`  | `12`                        | Frames sampled per episode                                                   |
+| `VLM_JUDGE_CACHE_DIR` | `outputs/vlm-judge/cache`   | SHA256-keyed result cache; empty disables disk cache                         |
 
 ### Annotation Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/datasets/{id}/episodes/{idx}/annotations` | GET | Get structured annotations |
-| `/api/datasets/{id}/episodes/{idx}/annotations` | PUT | Update structured annotations |
-| `/api/datasets/{id}/episodes/{idx}/annotations` | DELETE | Remove annotations |
-| `/api/datasets/{id}/episodes/{idx}/annotations/auto` | POST | Trigger auto-annotation |
-| `/api/datasets/{id}/annotations/summary` | GET | Get annotation summary across episodes |
+| Endpoint                                             | Method | Description                            |
+|------------------------------------------------------|--------|----------------------------------------|
+| `/api/datasets/{id}/episodes/{idx}/annotations`      | GET    | Get structured annotations             |
+| `/api/datasets/{id}/episodes/{idx}/annotations`      | PUT    | Update structured annotations          |
+| `/api/datasets/{id}/episodes/{idx}/annotations`      | DELETE | Remove annotations                     |
+| `/api/datasets/{id}/episodes/{idx}/annotations/auto` | POST   | Trigger auto-annotation                |
+| `/api/datasets/{id}/annotations/summary`             | GET    | Get annotation summary across episodes |
 
 ### Export and Analysis Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/datasets/{id}/export` | POST | Export dataset with filters |
-| `/api/datasets/{id}/export/stream` | POST | Stream export |
-| `/api/datasets/{id}/export/preview` | GET | Preview export configuration |
-| `/api/datasets/{id}/episodes/{idx}/detect` | POST | Run object detection |
-| `/api/analysis/trajectory-quality` | POST | Trajectory quality analysis |
-| `/api/analysis/anomaly-detection` | POST | Anomaly detection |
-| `/api/ai/suggest-annotation` | POST | AI-suggested annotations |
+| Endpoint                                   | Method | Description                  |
+|--------------------------------------------|--------|------------------------------|
+| `/api/datasets/{id}/export`                | POST   | Export dataset with filters  |
+| `/api/datasets/{id}/export/stream`         | POST   | Stream export                |
+| `/api/datasets/{id}/export/preview`        | GET    | Preview export configuration |
+| `/api/datasets/{id}/episodes/{idx}/detect` | POST   | Run object detection         |
+| `/api/analysis/trajectory-quality`         | POST   | Trajectory quality analysis  |
+| `/api/analysis/anomaly-detection`          | POST   | Anomaly detection            |
+| `/api/ai/suggest-annotation`               | POST   | AI-suggested annotations     |
 
 ## Annotation Workflow
 
@@ -282,10 +284,10 @@ Annotation combines API calls for efficiency with Playwright UI interaction for 
 
 The annotation panel exposes three structured surfaces in addition to free-form labels:
 
-| Surface | Storage | Notes |
-|---------|---------|-------|
-| Labels | `meta/episode_labels.json` | Free-form tag set with shared dataset-level options |
-| Episode annotation | `EpisodeAnnotation` JSON | Task completeness, trajectory quality, data quality, anomalies |
+| Surface              | Storage                                  | Notes                                                                          |
+|----------------------|------------------------------------------|--------------------------------------------------------------------------------|
+| Labels               | `meta/episode_labels.json`               | Free-form tag set with shared dataset-level options                            |
+| Episode annotation   | `EpisodeAnnotation` JSON                 | Task completeness, trajectory quality, data quality, anomalies                 |
 | Language instruction | `EpisodeAnnotation.language_instruction` | Optional VLA payload (instruction, source, paraphrases, subtask decomposition) |
 
 ### Multi-camera selection
@@ -296,13 +298,13 @@ Datasets that record multiple camera streams expose a camera selector in the ann
 
 The `LanguageInstructionWidget` writes a structured payload through `PUT /api/datasets/{id}/episodes/{idx}/annotations`:
 
-| Field | Purpose | Bounds |
-|-------|---------|--------|
-| `instruction` | Primary natural-language task description | 1–1000 chars |
-| `source` | Provenance: `human`, `template`, `llm-generated`, `retroactive` | enum |
-| `language` | BCP-47 language tag, defaults to `en` | up to 10 chars |
-| `paraphrases` | Alternative phrasings for data augmentation | up to 50 entries, 1000 chars each |
-| `subtask_instructions` | Ordered subtask decomposition for hierarchical conditioning | up to 100 entries, 1000 chars each |
+| Field                  | Purpose                                                         | Bounds                             |
+|------------------------|-----------------------------------------------------------------|------------------------------------|
+| `instruction`          | Primary natural-language task description                       | 1–1000 chars                       |
+| `source`               | Provenance: `human`, `template`, `llm-generated`, `retroactive` | enum                               |
+| `language`             | BCP-47 language tag, defaults to `en`                           | up to 10 chars                     |
+| `paraphrases`          | Alternative phrasings for data augmentation                     | up to 50 entries, 1000 chars each  |
+| `subtask_instructions` | Ordered subtask decomposition for hierarchical conditioning     | up to 100 entries, 1000 chars each |
 
 When a dataset task description is available the widget seeds the instruction with `source = template`; otherwise it creates a blank instruction with `source = human`. The source dropdown allows changing the value at any time.
 
@@ -323,10 +325,10 @@ print(f'Last joint positions: {traj[-1]["joint_positions"][:8]}')
 
 Episode trajectory data is a list of frame dictionaries, each containing:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `timestamp` | float | Time in seconds from episode start |
-| `frame` | int | Frame index |
+| Field             | Type        | Description                          |
+|-------------------|-------------|--------------------------------------|
+| `timestamp`       | float       | Time in seconds from episode start   |
+| `frame`           | int         | Frame index                          |
 | `joint_positions` | list[float] | Joint positions for all robot joints |
 
 The `meta` field of the episode response contains `index`, `length`, `task_index`, and `has_annotations`.
@@ -447,29 +449,29 @@ For individual episode review or correction:
 
 The React app has these key areas for Playwright interaction:
 
-| Area | Selector Pattern | Description |
-|------|-----------------|-------------|
-| Header | `header` | Contains title and dataset selector dropdown |
+| Area             | Selector Pattern                  | Description                                     |
+|------------------|-----------------------------------|-------------------------------------------------|
+| Header           | `header`                          | Contains title and dataset selector dropdown    |
 | Dataset selector | `header select` or `header input` | Dropdown (multi-dataset) or text input (single) |
-| Episode sidebar | `aside` | Scrollable episode list with selection state |
-| Episode item | `aside li button` | Clickable episode entry with index and metadata |
-| Main workspace | `main` | Annotation workspace with frame viewer |
-| Label filter | Label filter component in sidebar | Filter episodes by annotation labels |
+| Episode sidebar  | `aside`                           | Scrollable episode list with selection state    |
+| Episode item     | `aside li button`                 | Clickable episode entry with index and metadata |
+| Main workspace   | `main`                            | Annotation workspace with frame viewer          |
+| Label filter     | Label filter component in sidebar | Filter episodes by annotation labels            |
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Backend fails to start | Check `backend/.venv` exists; run `cd backend && uv venv --python 3.12 && source .venv/bin/activate && uv pip install -e ".[dev,analysis,export]"` |
-| Frontend shows "Loading..." indefinitely | Verify backend is healthy: `curl http://localhost:8000/health` |
-| No datasets visible | Check `DATA_DIR` in `backend/.env` points to a directory with dataset subdirectories |
-| Port conflict | Set `BACKEND_PORT` or `FRONTEND_PORT` environment variables |
-| CORS errors | Backend allows localhost ports 5173-5177; check the frontend port is in range |
-| Labels not persisted after restart | Call `POST /api/datasets/{id}/labels/save` after API-based annotation |
-| Playwright opens separate Chrome window | Ensure `--headless` is in the Playwright MCP args in `.vscode/mcp.json`; restart the MCP server after changing |
-| Snapshot refs stale after navigation | Always take a fresh `browser_snapshot` before clicking; refs change on page updates |
-| Slider not responding to Playwright | Use `browser_evaluate` with native input value setter and dispatch `input` + `change` events |
-| Sidebar not scrolling | Scroll the `aside ul` element directly via `browser_evaluate` with `element.scrollTop = N` |
+| Issue                                    | Solution                                                                                                                                           |
+|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
+| Backend fails to start                   | Check `backend/.venv` exists; run `cd backend && uv venv --python 3.12 && source .venv/bin/activate && uv pip install -e ".[dev,analysis,export]"` |
+| Frontend shows "Loading..." indefinitely | Verify backend is healthy: `curl http://localhost:8000/health`                                                                                     |
+| No datasets visible                      | Check `DATA_DIR` in `backend/.env` points to a directory with dataset subdirectories                                                               |
+| Port conflict                            | Set `BACKEND_PORT` or `FRONTEND_PORT` environment variables                                                                                        |
+| CORS errors                              | Backend allows localhost ports 5173-5177; check the frontend port is in range                                                                      |
+| Labels not persisted after restart       | Call `POST /api/datasets/{id}/labels/save` after API-based annotation                                                                              |
+| Playwright opens separate Chrome window  | Ensure `--headless` is in the Playwright MCP args in `.vscode/mcp.json`; restart the MCP server after changing                                     |
+| Snapshot refs stale after navigation     | Always take a fresh `browser_snapshot` before clicking; refs change on page updates                                                                |
+| Slider not responding to Playwright      | Use `browser_evaluate` with native input value setter and dispatch `input` + `change` events                                                       |
+| Sidebar not scrolling                    | Scroll the `aside ul` element directly via `browser_evaluate` with `element.scrollTop = N`                                                         |
 
 ## VLM-as-Judge Workflow
 
@@ -495,10 +497,10 @@ VLM_JUDGE_CACHE_DIR=outputs/vlm-judge/cache
 
 ### Backends at a glance
 
-| Backend | Use case | Notes |
-|---------|----------|-------|
-| `echo` | UI smoke / wiring tests | Deterministic stub, no GPU, no network |
-| `qwen3-vl` | Local HF inference | First call downloads weights; ~10 GB GPU for `Qwen3-VL-4B-Instruct` BF16 |
+| Backend         | Use case                         | Notes                                                                           |
+|-----------------|----------------------------------|---------------------------------------------------------------------------------|
+| `echo`          | UI smoke / wiring tests          | Deterministic stub, no GPU, no network                                          |
+| `qwen3-vl`      | Local HF inference               | First call downloads weights; ~10 GB GPU for `Qwen3-VL-4B-Instruct` BF16        |
 | `openai-compat` | vLLM / NVIDIA NIM / Azure OpenAI | Set `VLM_JUDGE_BASE_URL` (+ `VLM_JUDGE_API_KEY` if needed); identical code path |
 
 ### UI workflow (Trajectory tab)

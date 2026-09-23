@@ -34,7 +34,6 @@ bld/
 [Oo]ut/
 [Ll]og/
 [Ll]ogs/
-data-management/sim-viewer/dist/
 
 # Build results on 'Bin' directories
 **/[Bb]in/*
@@ -490,3 +489,5 @@ envs/
 
 datasets/
 local/
+
+*.etli

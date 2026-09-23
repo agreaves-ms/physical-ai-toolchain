@@ -12,7 +12,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || (cd "${SCRIPT_DIR}/../.." && pwd))"
 BACKEND_DIR="${SCRIPT_DIR}/backend"
 FRONTEND_DIR="${SCRIPT_DIR}/frontend"
 
@@ -57,6 +57,7 @@ Options:
     --backend             Start backend only
     --frontend            Start frontend only
     --data-dir <path>     Local datasets directory (overrides DATA_DIR env var)
+    --check               Check installed launch prerequisites without starting services
     --help, -h            Show this help message
 
 Environment Variables:
@@ -76,6 +77,8 @@ EOF
 }
 
 cleanup() {
+    local status=$?
+    trap - EXIT SIGINT SIGTERM SIGHUP
     log_info "Shutting down services..."
 
     if [[ -n "${BACKEND_PID}" ]] && kill -0 "${BACKEND_PID}" 2>/dev/null; then
@@ -91,10 +94,13 @@ cleanup() {
     fi
 
     log_success "All services stopped"
-    exit 0
+    return "${status}"
 }
 
-trap cleanup SIGINT SIGTERM
+trap cleanup EXIT
+trap 'exit 130' SIGINT
+trap 'exit 143' SIGTERM
+trap 'exit 129' SIGHUP
 
 check_prerequisites() {
     local missing=()
@@ -111,28 +117,53 @@ check_prerequisites() {
         missing+=("npm")
     fi
 
+    if ! command -v curl &>/dev/null; then
+        missing+=("curl")
+    fi
+
+    if ! command -v uv &>/dev/null; then
+        missing+=("uv")
+    fi
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_error "Missing prerequisites: ${missing[*]}"
         exit 1
     fi
+
+    for port in "${BACKEND_PORT}" "${FRONTEND_PORT}"; do
+        if [[ ! "${port}" =~ ^[0-9]+$ ]] || (( port < 1024 || port > 65535 )); then
+            log_error "Ports must be integers from 1024 through 65535"
+            exit 1
+        fi
+    done
+    if [[ "${BACKEND_PORT}" == "${FRONTEND_PORT}" ]] || [[ ! "${HEALTH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
+        log_error "Select distinct ports and a positive HEALTH_TIMEOUT"
+        exit 1
+    fi
 }
 
-wait_for_backend() {
-    local url="http://localhost:${BACKEND_PORT}/health"
+wait_for_service() {
+    local url="$1"
+    local pid="$2"
+    local label="$3"
     local elapsed=0
 
-    log_info "Waiting for backend to be ready..."
+    log_info "Waiting for ${label} to be ready..."
 
     while [[ ${elapsed} -lt ${HEALTH_TIMEOUT} ]]; do
-        if curl -sf "${url}" >/dev/null 2>&1; then
-            log_success "Backend is healthy"
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            log_error "${label} exited before readiness"
+            return 1
+        fi
+        if curl --max-time 2 -sf "${url}" >/dev/null 2>&1; then
+            log_success "${label} is healthy"
             return 0
         fi
         sleep 1
         elapsed=$((elapsed + 1))
     done
 
-    log_error "Backend failed to start within ${HEALTH_TIMEOUT} seconds"
+    log_error "${label} failed to start within ${HEALTH_TIMEOUT} seconds"
     return 1
 }
 
@@ -193,7 +224,7 @@ start_backend() {
         cd "${BACKEND_DIR}"
         # shellcheck source=/dev/null
         source .venv/bin/activate
-        uvicorn src.api.main:app --reload --port "${BACKEND_PORT}" 2>&1
+        exec uvicorn src.api.main:app --reload --host 127.0.0.1 --port "${BACKEND_PORT}" 2>&1
     ) &
     BACKEND_PID=$!
 
@@ -213,7 +244,7 @@ start_frontend() {
     (
         cd "${FRONTEND_DIR}"
         VITE_API_BASE_URL="${frontend_api_base_url}" \
-            npm run dev -- --port "${FRONTEND_PORT}" 2>&1
+            exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port "${FRONTEND_PORT}" --strictPort 2>&1
     ) &
     FRONTEND_PID=$!
 
@@ -223,6 +254,7 @@ start_frontend() {
 main() {
     local backend_only=false
     local frontend_only=false
+    local check_only=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -232,6 +264,10 @@ main() {
                 ;;
             --frontend)
                 frontend_only=true
+                shift
+                ;;
+            --check)
+                check_only=true
                 shift
                 ;;
             --data-dir)
@@ -262,6 +298,19 @@ main() {
 
     check_prerequisites
 
+    if [[ "${check_only}" == "true" ]]; then
+        if [[ "${frontend_only}" != "true" && ! -x "${BACKEND_DIR}/.venv/bin/uvicorn" ]]; then
+            log_error "Backend environment is missing; run the dataviewer launcher to install it"
+            return 1
+        fi
+        if [[ "${backend_only}" != "true" && ! -f "${FRONTEND_DIR}/node_modules/vite/bin/vite.js" ]]; then
+            log_error "Frontend dependencies are missing; run npm ci in ${FRONTEND_DIR}"
+            return 1
+        fi
+        log_success "Launch prerequisites are available; no services started"
+        return 0
+    fi
+
     echo ""
     echo "========================================"
     echo "  Dataset Analysis Tool"
@@ -270,21 +319,22 @@ main() {
 
     if [[ "${frontend_only}" == "true" ]]; then
         start_frontend
+        wait_for_service "http://127.0.0.1:${FRONTEND_PORT}" "${FRONTEND_PID}" Frontend
         log_success "Frontend available at http://localhost:${FRONTEND_PORT}"
         wait "${FRONTEND_PID}"
     elif [[ "${backend_only}" == "true" ]]; then
         start_backend
-        if wait_for_backend; then
-            log_success "Backend available at http://localhost:${BACKEND_PORT}"
-            log_info "API docs: http://localhost:${BACKEND_PORT}/docs"
-        fi
+        wait_for_service "http://127.0.0.1:${BACKEND_PORT}/health" "${BACKEND_PID}" Backend
+        log_success "Backend available at http://localhost:${BACKEND_PORT}"
+        log_info "API docs: http://localhost:${BACKEND_PORT}/docs"
         wait "${BACKEND_PID}"
     else
         # Start both services
         start_backend
 
-        if wait_for_backend; then
+        if wait_for_service "http://127.0.0.1:${BACKEND_PORT}/health" "${BACKEND_PID}" Backend; then
             start_frontend
+            wait_for_service "http://127.0.0.1:${FRONTEND_PORT}" "${FRONTEND_PID}" Frontend
 
             echo ""
             log_success "Both services are running:"
@@ -296,11 +346,11 @@ main() {
             echo ""
 
             # Wait for either process to exit
-            wait -n "${BACKEND_PID}" "${FRONTEND_PID}" 2>/dev/null || true
-            cleanup
+            wait -n "${BACKEND_PID}" "${FRONTEND_PID}"
+            log_error "A service exited unexpectedly"
+            return 1
         else
-            cleanup
-            exit 1
+            return 1
         fi
     fi
 }

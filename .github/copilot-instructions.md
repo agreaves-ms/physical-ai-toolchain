@@ -34,7 +34,7 @@ Write natural, direct, reader-focused prose. Avoid corporate filler, inflated cl
 ## Agent Workflows
 
 * The primary agent writes and updates RPI plans; do not use `RPI Planner` subagents.
-* Delegate RPI reviews and critiques to `GPT-5.6 Luna (copilot)`, unless the user explicitly chooses another model for `rpi-review` or `rpi-plan-critique`. The caller may provide context and accept, disregard, or verify findings; it owns the final output.
+* Delegate RPI reviews and critiques to `GPT-6 Luna (copilot)`, unless the user explicitly chooses another model for `rpi-review` or `rpi-plan-critique`. The caller may provide context and accept, disregard, or verify findings; it owns the final output.
 * HVE Builder does not require subagent reviews. Do not use `HVE Artifact Tester`; the primary agent performs surface-level `hve-builder-tester` checks and states what remains unverified. Separate RPI reviews still follow the rule above.
 
 ## Companion Library
