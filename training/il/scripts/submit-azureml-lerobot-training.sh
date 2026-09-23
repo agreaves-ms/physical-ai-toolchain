@@ -476,6 +476,9 @@ if [[ "$assets_only" == "true" ]]; then
   exit 0
 fi
 
+managed_identity_client_id=$(resolve_azureml_compute_identity_client_id \
+  "$compute" "$resource_group" "$workspace_name")
+
 #------------------------------------------------------------------------------
 # Pre-submission Checks
 #------------------------------------------------------------------------------
@@ -523,6 +526,7 @@ az_args=(
 [[ -n "$instance_type" ]] && az_args+=(--set "resources.instance_type=$instance_type")
 [[ -n "$experiment_name" ]] && az_args+=(--set "experiment_name=$experiment_name")
 [[ -n "$display_name" ]] && az_args+=(--set "display_name=$display_name")
+[[ -n "$managed_identity_client_id" ]] && az_args+=(--set "environment_variables.AZURE_CLIENT_ID=$managed_identity_client_id")
 
 az_args+=(--set "command=$train_cmd")
 
@@ -615,7 +619,7 @@ info "  Image: $image"
 # Ctrl+C between az invocation and a successful return leaves the operator
 # unsure whether the job was accepted. Print a clear pointer to the portal so
 # they can resolve the ambiguity instead of blindly resubmitting.
-# shellcheck disable=SC2329  # invoked indirectly via `trap`
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via `trap`
 _interrupt_message() {
   error "Interrupted while waiting for az ml job create. The job may have been submitted."
   error "Check: https://ml.azure.com/runs?wsid=/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.MachineLearningServices/workspaces/${workspace_name}"

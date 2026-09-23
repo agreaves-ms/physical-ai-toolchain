@@ -129,6 +129,7 @@ describe('AnnotationWorkspace status and header actions', () => {
 
     expect(screen.queryByRole('tab', { name: /episode viewer/i })).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /trajectory viewer/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /episode analyzer/i })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: /object detection/i })).not.toBeInTheDocument()
   })
 

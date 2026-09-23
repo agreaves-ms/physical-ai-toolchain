@@ -1,6 +1,6 @@
 """Unit tests for authentication and CSRF middleware."""
 
-import os
+from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,49 +9,43 @@ from src.api.main import app
 
 
 @pytest.fixture(autouse=True)
-def reset_auth_state(tmp_path):
-    """Reset the auth provider singleton and set a valid DATA_DIR before each test."""
+def reset_auth_state(tmp_path, monkeypatch):
+    """Reset application state and use isolated local storage for each test."""
     from src.api import auth as auth_mod
+    from src.api import config as config_mod
+    from src.api import main as main_mod
 
-    os.environ["DATA_DIR"] = str(tmp_path)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    config_mod._app_config = None
+    monkeypatch.setattr(main_mod, "_config", config_mod.load_config())
     auth_mod.reset_auth_provider()
     yield
     auth_mod.reset_auth_provider()
-    os.environ.pop("DATA_DIR", None)
+    config_mod._app_config = None
 
 
 @pytest.fixture
-def client_with_auth():
+def client_with_auth(monkeypatch):
     """Test client with authentication enabled and API-key provider configured."""
     import src.api.services.dataset_service as ds_mod
 
     ds_mod._dataset_service = None
-    original_disabled = os.environ.pop("DATAVIEWER_AUTH_DISABLED", None)
-    os.environ["DATAVIEWER_AUTH_PROVIDER"] = "apikey"
-    os.environ["DATAVIEWER_API_KEY"] = "test-secret-key"
+    monkeypatch.delenv("DATAVIEWER_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("DATAVIEWER_AUTH_PROVIDER", "apikey")
+    monkeypatch.setenv("DATAVIEWER_API_KEY", "test-secret-key")
     yield TestClient(app)
-    if original_disabled is not None:
-        os.environ["DATAVIEWER_AUTH_DISABLED"] = original_disabled
-    else:
-        os.environ.pop("DATAVIEWER_AUTH_DISABLED", None)
-    os.environ.pop("DATAVIEWER_AUTH_PROVIDER", None)
-    os.environ.pop("DATAVIEWER_API_KEY", None)
     ds_mod._dataset_service = None
 
 
 @pytest.fixture
-def client_auth_disabled():
+def client_auth_disabled(monkeypatch):
     """Test client with auth disabled (DATAVIEWER_AUTH_DISABLED=true)."""
     import src.api.services.dataset_service as ds_mod
 
     ds_mod._dataset_service = None
-    original = os.environ.get("DATAVIEWER_AUTH_DISABLED")
-    os.environ["DATAVIEWER_AUTH_DISABLED"] = "true"
+    monkeypatch.setenv("DATAVIEWER_AUTH_DISABLED", "true")
     yield TestClient(app)
-    if original is not None:
-        os.environ["DATAVIEWER_AUTH_DISABLED"] = original
-    else:
-        os.environ.pop("DATAVIEWER_AUTH_DISABLED", None)
     ds_mod._dataset_service = None
 
 
@@ -80,6 +74,32 @@ class TestCsrfTokenEndpoint:
         t1 = client_auth_disabled.get("/api/csrf-token").json()["csrf_token"]
         t2 = client_auth_disabled.get("/api/csrf-token").json()["csrf_token"]
         assert t1 != t2
+
+
+class TestPrincipalContextEndpoint:
+    def test_auth_disabled_returns_stable_non_personal_scope(self, client_auth_disabled):
+        first = client_auth_disabled.get("/api/auth/context")
+        second = client_auth_disabled.get("/api/auth/context")
+
+        assert first.status_code == 200
+        assert first.json() == second.json()
+        assert first.json()["auth_mode"] == "local"
+        assert first.json()["scope_id"].startswith("principal-")
+
+    def test_api_key_returns_opaque_service_scope(self, client_with_auth):
+        response = client_with_auth.get(
+            "/api/auth/context",
+            headers={"X-API-Key": "test-secret-key"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["auth_mode"] == "apikey"
+        assert "test-secret-key" not in response.json()["scope_id"]
+
+    def test_missing_api_key_is_rejected(self, client_with_auth):
+        response = client_with_auth.get("/api/auth/context")
+
+        assert response.status_code == 401
 
 
 # ============================================================================

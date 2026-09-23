@@ -410,6 +410,11 @@ else
 fi
 
 # CSI Secrets Store: keeps secrets in sync with Key Vault after initial creation
+managed_secrets=(osmo-default-admin)
+[[ "$include_postgres_secret" == "true" ]] && managed_secrets+=(db-secret)
+[[ "$include_redis_secret" == "true" ]] && managed_secrets+=(redis-secret)
+kubectl label secret -n "$NS_OSMO_CONTROL_PLANE" "${managed_secrets[@]}" \
+    secrets-store.csi.k8s.io/managed=true --overwrite >/dev/null
 apply_secret_provider_class "$NS_OSMO_CONTROL_PLANE" "$kv_name" "$osmo_identity_client_id" "$tenant_id" "$include_redis_secret" "$include_postgres_secret"
 
 #------------------------------------------------------------------------------
@@ -454,35 +459,35 @@ if [[ "$skip_mek" == "false" ]]; then
         # Clear service_auth from DB — it was encrypted with the old MEK and is now
         # undecryptable. The service regenerates a fresh keypair on next start.
         info "Clearing stale service_auth from database..."
-                kubectl delete pod osmo-clear-auth -n "$NS_OSMO_CONTROL_PLANE" --ignore-not-found >/dev/null
-                cat <<EOF | kubectl apply -f - >/dev/null
+        kubectl delete pod osmo-clear-auth -n "$NS_OSMO_CONTROL_PLANE" --ignore-not-found >/dev/null
+        cat <<EOF | kubectl apply -f - >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
-    name: osmo-clear-auth
-    namespace: $NS_OSMO_CONTROL_PLANE
+  name: osmo-clear-auth
+  namespace: $NS_OSMO_CONTROL_PLANE
 spec:
-    restartPolicy: Never
-    containers:
-        - name: psql
-            image: postgres:16@sha256:eb4759788a2182f08257135e61a34f2cfc3c2914079f3465d64ee62350f4d081
-            env:
-                - name: PGPASSWORD
-                    valueFrom:
-                        secretKeyRef:
-                            name: db-secret
-                            key: db-password
-            command: [psql]
-            args:
-                - "host=$pg_fqdn port=5432 dbname=osmo user=$pg_user sslmode=require"
-                - -c
-                - "DELETE FROM configs WHERE key='service_auth' AND type='SERVICE'"
+  restartPolicy: Never
+  containers:
+    - name: psql
+      image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+      env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: db-password
+      command: [psql]
+      args:
+        - "host=$pg_fqdn port=5432 dbname=osmo user=$pg_user sslmode=require"
+        - -c
+        - "DELETE FROM configs WHERE key='service_auth' AND type='SERVICE'"
 EOF
-                if ! kubectl wait pod/osmo-clear-auth -n "$NS_OSMO_CONTROL_PLANE" \
-                        --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s >/dev/null 2>&1; then
-                        warn "Could not clear service_auth (DB may not be initialized yet — safe on first deploy)"
-                fi
-                kubectl delete pod osmo-clear-auth -n "$NS_OSMO_CONTROL_PLANE" --ignore-not-found >/dev/null
+        if ! kubectl wait pod/osmo-clear-auth -n "$NS_OSMO_CONTROL_PLANE" \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s >/dev/null 2>&1; then
+            warn "Could not clear service_auth (DB may not be initialized yet — safe on first deploy)"
+        fi
+        kubectl delete pod osmo-clear-auth -n "$NS_OSMO_CONTROL_PLANE" --ignore-not-found >/dev/null
 
         # Ensure the service pod restarts to pick up the new MEK and regenerate service_auth.
         # Helm upgrade may not trigger a rollout if values are unchanged.
@@ -660,34 +665,6 @@ if [[ -n "$service_url" ]]; then
     else
         warn "OSMO login failed — gateway may not be reachable from this host. Configure VPN for CLI access (or, in a devcontainer/codespace, port-forward the gateway: kubectl port-forward svc/osmo-gateway 9000:80 -n $NS_OSMO_CONTROL_PLANE)."
     fi
-fi
-
-# Assign required roles to admin user for backend operator connectivity.
-# Dev-mode operator authenticates as "admin" — needs osmo-admin, osmo-backend, osmo-ctrl roles.
-# Calls osmo-service directly (port 8000) to bypass gateway authz sidecar.
-# osmo-admin is auto-assigned by the service; osmo-backend and osmo-ctrl need explicit assignment.
-info "Assigning backend roles to admin user..."
-service_pod=$(kubectl get pods -n "$NS_OSMO_CONTROL_PLANE" -l app=osmo-service --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-if [[ -n "$service_pod" ]]; then
-    timeout 30 kubectl --kubeconfig "$kubeconfig" --context "$context" \
-        exec "$service_pod" -n "$NS_OSMO_CONTROL_PLANE" -- python3 -c "
-import urllib.request, json, ssl
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
-headers = {'Content-Type': 'application/json', 'x-osmo-user': 'admin'}
-for role in ['osmo-backend', 'osmo-ctrl']:
-    req = urllib.request.Request(
-        'https://localhost:8000/api/auth/user/admin/roles',
-        data=json.dumps({'role': role}).encode(),
-        headers=headers, method='POST')
-    try:
-        urllib.request.urlopen(req, timeout=5, context=ctx)
-    except urllib.error.HTTPError as e:
-        if e.code not in (409, 422):  # 409=already assigned, 422=system role
-            raise
-print('Admin roles verified: osmo-admin (system), osmo-backend, osmo-ctrl')
-" || warn "Role assignment failed — operator may not authenticate correctly"
 fi
 
 #------------------------------------------------------------------------------

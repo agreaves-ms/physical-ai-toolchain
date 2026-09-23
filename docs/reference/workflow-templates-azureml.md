@@ -1,8 +1,8 @@
 ---
 title: Workflow Templates (AzureML)
-description: Canonical AzureML workflow template reference for training and evaluation jobs.
+description: Selected AzureML workflow templates for RL, LeRobot, and SiL training and evaluation.
 author: Microsoft Robotics-AI Team
-ms.date: 2026-06-01
+ms.date: 2026-09-22
 ms.topic: reference
 keywords:
   - azureml
@@ -12,18 +12,22 @@ keywords:
   - evaluation
 ---
 
-Canonical AzureML workflow templates for RL and LeRobot training and evaluation.
+Selected AzureML workflow templates for RL, LeRobot, and software-in-the-loop (SiL) training and evaluation, consistent with the [AzureML workflow index](pathname://../../workflows/azureml/README.md). This is not an exhaustive inventory and does not cover VLA workflows.
 Template names, defaults, and paths in this page are derived from the YAML files
 in `training/` and `evaluation/`.
 
 ## Template Inventory
 
-| Template                   | Purpose                                                   | Source YAML path                                            | Typical submit path                                            |
-|----------------------------|-----------------------------------------------------------|-------------------------------------------------------------|----------------------------------------------------------------|
-| `train.yaml`               | Isaac Lab RL training job structure                       | `training/rl/workflows/azureml/train.yaml`                  | `training/rl/scripts/submit-azureml-training.sh`               |
-| `lerobot-train.yaml`       | LeRobot behavioral cloning training job structure         | `training/il/workflows/azureml/lerobot-train.yaml`          | `training/il/scripts/submit-azureml-lerobot-training.sh`       |
-| `isaaclab-evaluation.yaml` | Isaac Lab policy evaluation against registered models     | `evaluation/sil/workflows/azureml/isaaclab-evaluation.yaml` | `evaluation/sil/scripts/submit-azureml-isaaclab-evaluation.sh` |
-| `lerobot-eval.yaml`        | LeRobot policy evaluation and optional model registration | `evaluation/sil/workflows/azureml/lerobot-eval.yaml`        | `evaluation/sil/scripts/submit-azureml-lerobot-eval.sh`        |
+| Template                              | Purpose                                                   | Source YAML path                                                    | Typical submit path                                                                                   |
+|---------------------------------------|-----------------------------------------------------------|---------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `train.yaml`                          | Isaac Lab RL training job structure                       | `training/rl/workflows/azureml/train.yaml`                          | `training/rl/scripts/submit-azureml-training.sh`                                                      |
+| `lerobot-train.yaml`                  | LeRobot behavioral cloning training job structure         | `training/il/workflows/azureml/lerobot-train.yaml`                  | `training/il/scripts/submit-azureml-lerobot-training.sh`                                              |
+| `isaaclab-evaluation.yaml`            | Isaac Lab policy evaluation against registered models     | `evaluation/sil/workflows/azureml/isaaclab-evaluation.yaml`         | `evaluation/sil/scripts/submit-azureml-isaaclab-evaluation.sh`                                        |
+| `lerobot-eval.yaml`                   | LeRobot policy evaluation and optional model registration | `evaluation/sil/workflows/azureml/lerobot-eval.yaml`                | `evaluation/sil/scripts/submit-azureml-lerobot-eval.sh`                                               |
+| `lerobot-pipeline.yaml`               | LeRobot preprocess/train/evaluate pipeline                | `training/il/workflows/azureml/lerobot-pipeline.yaml`               | `training/il/scripts/submit-azureml-lerobot-pipeline.sh`                                              |
+| `lerobot-pipeline-with-register.yaml` | Pipeline with registration step                           | `training/il/workflows/azureml/lerobot-pipeline-with-register.yaml` | `training/il/scripts/submit-azureml-lerobot-pipeline.sh --with-register --register-model-name <name>` |
+
+The pipeline submitter selects the three-step template by default. `--with-register` selects the four-step variant and requires `--register-model-name`. The sections below describe the standalone command-job templates; pipeline component configuration remains in the source YAML and submitter help.
 
 ## train.yaml
 
@@ -33,7 +37,7 @@ in `training/` and `evaluation/`.
 | Source YAML path                 | `training/rl/workflows/azureml/train.yaml`                                                                                                                                                                                                                                          |
 | Primary parameters and overrides | `inputs.task` (`Isaac-Velocity-Rough-Anymal-C-v0`), `inputs.num_envs` (`"2048"`), `inputs.max_iterations` (`"600"`), `inputs.checkpoint_mode` (`from-scratch`), `inputs.checkpoint_uri` (`none`), `inputs.register_checkpoint` (`none`), `inputs.run_azure_smoke_test` (`"false"`). |
 | Typical submit path              | `training/rl/scripts/submit-azureml-training.sh`                                                                                                                                                                                                                                    |
-| Usage notes                      | Keep template values as structural defaults. The submit script sets runtime command, compute, and Azure context.                                                                                                                                                                    |
+| Usage notes                      | Keep template values as structural defaults. The submit script sets runtime command, compute, and Azure context. Direct submission requires the pinned environment version to be registered first.                                                                                  |
 
 ## lerobot-train.yaml
 
@@ -43,17 +47,17 @@ in `training/` and `evaluation/`.
 | Source YAML path                 | `training/il/workflows/azureml/lerobot-train.yaml`                                                                                                                                                                                                                                                                                |
 | Primary parameters and overrides | `inputs.dataset_repo_id` (`none`), `inputs.policy_type` (`act`), `inputs.job_name` (`lerobot-act-training`), `inputs.output_dir` (`/workspace/outputs/train`), `inputs.training_steps` (`none`), `inputs.batch_size` (`none`), `inputs.eval_freq` (`none`), `inputs.save_freq` (`"5000"`), `inputs.register_checkpoint` (`none`). |
 | Typical submit path              | `training/il/scripts/submit-azureml-lerobot-training.sh`                                                                                                                                                                                                                                                                          |
-| Usage notes                      | Use script flags for policy source and hyperparameters. Secrets such as HuggingFace tokens are injected at submission time.                                                                                                                                                                                                       |
+| Usage notes                      | Use script flags for policy source and hyperparameters. Secrets such as HuggingFace tokens are injected at submission time. Direct submission requires the pinned environment version to be registered first.                                                                                                                     |
 
 ## isaaclab-evaluation.yaml
 
-| Field                            | Details                                                                                                                                                                                                    |
-|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Purpose                          | Structural template for Isaac Lab evaluation jobs against registered models.                                                                                                                               |
-| Source YAML path                 | `evaluation/sil/workflows/azureml/isaaclab-evaluation.yaml`                                                                                                                                                |
-| Primary parameters and overrides | `inputs.trained_model.path` (`azureml:placeholder:1`), `inputs.task` (`auto`), `inputs.framework` (`auto`), `inputs.eval_episodes` (`100`), `inputs.num_envs` (`64`), `inputs.success_threshold` (`-1.0`). |
-| Typical submit path              | `evaluation/sil/scripts/submit-azureml-isaaclab-evaluation.sh`                                                                                                                                             |
-| Usage notes                      | The script resolves model metadata and passes overrides with `--set`. The template intentionally uses sentinel defaults (`auto`, placeholder paths).                                                       |
+| Field                            | Details                                                                                                                                                                                                                                |
+|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Purpose                          | Structural template for Isaac Lab evaluation jobs against registered models.                                                                                                                                                           |
+| Source YAML path                 | `evaluation/sil/workflows/azureml/isaaclab-evaluation.yaml`                                                                                                                                                                            |
+| Primary parameters and overrides | `inputs.trained_model.path` (`azureml:placeholder:1`), `inputs.task` (`auto`), `inputs.framework` (`auto`), `inputs.eval_episodes` (`100`), `inputs.num_envs` (`64`), `inputs.success_threshold` (`-1.0`).                             |
+| Typical submit path              | `evaluation/sil/scripts/submit-azureml-isaaclab-evaluation.sh`                                                                                                                                                                         |
+| Usage notes                      | The script resolves model metadata and passes overrides with `--set`. The template intentionally uses sentinel defaults (`auto`, placeholder paths). Direct submission requires the pinned environment version to be registered first. |
 
 ## lerobot-eval.yaml
 
@@ -63,13 +67,14 @@ in `training/` and `evaluation/`.
 | Source YAML path                 | `evaluation/sil/workflows/azureml/lerobot-eval.yaml`                                                                                                                                                                                                                                                                          |
 | Primary parameters and overrides | `inputs.policy_repo_id` (`none`), `inputs.policy_type` (`act`), `inputs.dataset_repo_id` (`none`), `inputs.eval_episodes` (`"10"`), `inputs.eval_batch_size` (`"10"`), `inputs.record_video` (`"false"`), `inputs.mlflow_enable` (`"false"`), `inputs.register_model` (`none`), `inputs.blob_storage_container` (`datasets`). |
 | Typical submit path              | `evaluation/sil/scripts/submit-azureml-lerobot-eval.sh`                                                                                                                                                                                                                                                                       |
-| Usage notes                      | This template is the canonical AzureML LeRobot evaluation reference.                                                                                                                                                                                                                                                          |
+| Usage notes                      | This template is the canonical AzureML LeRobot evaluation reference. Direct submission requires the pinned environment version to be registered first.                                                                                                                                                                        |
 
 ## Usage Notes
 
-| Topic             | Guidance                                                                                                        |
-|-------------------|-----------------------------------------------------------------------------------------------------------------|
-| Source of truth   | Use YAML files in `training/` and `evaluation/` for template names, keys, and defaults.                         |
-| Override pattern  | Treat templates as structure-first; submission scripts provide runtime command and environment-specific values. |
-| Azure context     | Set `subscription_id`, `resource_group`, and `workspace_name` through script options or environment variables.  |
-| Related reference | See [Reference index](README.md) for adjacent script and artifact guides.                                       |
+| Topic             | Guidance                                                                                                                                                                                                                                                                                                   |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Source of truth   | Use YAML files in `training/` and `evaluation/` for template names, keys, and defaults. `scripts/update-image-digests.sh` synchronizes environment versions with the checked-in image defaults in `scripts/lib/common.sh`.                                                                                 |
+| Override pattern  | Treat templates as structure-first; submission scripts provide runtime command and environment-specific values.                                                                                                                                                                                            |
+| Azure context     | Set `subscription_id`, `resource_group`, and `workspace_name` through script options or environment variables.                                                                                                                                                                                             |
+| Direct submission | Register the referenced environment asset first. An `Environment asset not found` error means the pinned version has not been registered; run the submission script to register and verify it. The digest-derived version correlates the asset with an image but does not make Azure ML verify that image. |
+| Related reference | See [Reference index](README.md) for adjacent script and artifact guides.                                                                                                                                                                                                                                  |

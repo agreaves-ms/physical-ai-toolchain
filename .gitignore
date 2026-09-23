@@ -74,6 +74,8 @@ BenchmarkDotNet.Artifacts/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+**/.artifacts/
+/outputs/
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
@@ -343,6 +345,7 @@ paket-files/
 
 # Python Tools for Visual Studio (PTVS)
 **/__pycache__/
+**/*.egg-info/
 *.pyc
 
 # Hypothesis testing framework cache
@@ -462,7 +465,10 @@ terraform.rc
 venv/
 .hypothesis/
 **/out/*
+.agent/
 .copilot-tracking/
+.github/instructions/hve-core/copilot-tracking.instructions.md
+.github/skills/rpi-*/
 
 # Isaac Sim assets
 .isaac-sim-assets/
@@ -475,6 +481,8 @@ infrastructure/setup/values/osmo-platforms-*.yaml
 
 # Local scanner output (Trivy/Grype via scripts/security/generate-vex.sh)
 .scan/
+*.openvex.json.lock/
+*.openvex.json.tmp.*
 dependency-pinning-artifacts/*
 !dependency-pinning-artifacts/README.md
 
@@ -482,7 +490,6 @@ dependency-pinning-artifacts/*
 .beads/
 external/
 AGENTS.md
-.gitattributes
 
 # Terraform Environments
 envs/
@@ -491,3 +498,6 @@ datasets/
 local/
 
 *.etli
+
+# Sources staged into the gpu-offload build context by examples/ur10e-single
+gpu-offload/examples/ur10e-single/.ur10e-src/

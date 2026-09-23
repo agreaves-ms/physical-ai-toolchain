@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -15,6 +16,26 @@ from tests.e2e._common import run_command
 
 AML_COMPUTE_NAME_MAX_LENGTH = 16
 TFVARS_FALLBACK_OUTPUT_KEYS = ("resource_group", "azureml_workspace", "aks_cluster", "storage_account")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "requires_hf_token: marks tests that require HF_TOKEN for gated Hugging Face model access",
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    if item.get_closest_marker("requires_hf_token") is None:
+        return
+    if os.environ.get("HF_TOKEN", "").strip():
+        return
+
+    pytest.fail(
+        f"{item.nodeid} requires HF_TOKEN for gated Hugging Face model access",
+        pytrace=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -301,10 +322,13 @@ def ensure_osmo_cli_available(repo_root: Path) -> None:
     if shutil.which("osmo") is None:
         pytest.skip("OSMO CLI is not installed")
 
-    result = run_command(
-        ["osmo", "workflow", "list", "--count", "1", "--format-type", "json"],
-        cwd=repo_root,
-    )
+    args = ["osmo", "workflow", "list", "--count", "1", "--format-type", "json"]
+    result = run_command(args, cwd=repo_root)
+    for _ in range(11):
+        if result.returncode == 0:
+            break
+        time.sleep(5)
+        result = run_command(args, cwd=repo_root)
     if result.returncode != 0:
         pytest.skip("OSMO CLI is unavailable or not authenticated")
 
@@ -366,7 +390,7 @@ def _cluster_has_scalable_gpu_node_pool(repo_root: Path) -> bool:
 
     tf_outputs = _terraform_outputs(repo_root)
     resource_group = os.environ.get("AZURE_RESOURCE_GROUP") or tf_outputs.try_key_value("resource_group")
-    cluster_name = tf_outputs.try_key_value("aks_cluster")
+    cluster_name = os.environ.get("AKS_CLUSTER_NAME") or tf_outputs.try_key_value("aks_cluster")
     if not resource_group or not cluster_name:
         return False
 

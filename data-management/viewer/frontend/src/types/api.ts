@@ -153,6 +153,29 @@ export interface EpisodeData {
   trajectoryData: TrajectoryPoint[]
 }
 
+/**
+ * Structured per-episode analysis persisted beside the dataset.
+ */
+export interface EpisodeAnalysisRecord {
+  pickFrom?: string | null
+  object?: string | null
+  graspSuccess?: boolean | null
+  placeSuccess?: boolean | null
+  movementQuality?: string | null
+  notes?: string | null
+  instruction?: string | null
+  durationS?: number | null
+  smoothness?: number | null
+  normalizedSmoothness?: number | null
+  efficiency?: number | null
+  jitter?: number | null
+  hesitationCount?: number | null
+  correctionCount?: number | null
+  motionScore?: number | null
+  motionFlags?: string[]
+  source?: string | null
+}
+
 // ============================================================================
 // Auto-Analysis Types
 // ============================================================================

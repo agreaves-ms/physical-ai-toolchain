@@ -107,6 +107,7 @@ workspace_name="${AZUREML_WORKSPACE_NAME:-$(get_azureml_workspace)}"
 storage_account="${AZURE_STORAGE_ACCOUNT_NAME:-$(get_storage_account)}"
 osmo_container="${OSMO_WORKFLOW_BUCKET:-osmo}"
 correlation_id="${MLFLOW_CORRELATION_ID:-}"
+workflow_name="${OSMO_WORKFLOW_NAME:-}"
 
 sleep_after_unpack="${SLEEP_AFTER_UNPACK:-}"
 run_smoke="${RUN_AZURE_SMOKE_TEST:-0}"
@@ -161,6 +162,10 @@ require_tools osmo zip
 [[ -d "$REPO_ROOT/training/rl" ]] || fatal "Directory training/rl not found"
 [[ -z "$storage_account" ]] && fatal "Azure storage account required for code upload (set AZURE_STORAGE_ACCOUNT_NAME or deploy infra)"
 
+entry_script="$SCRIPT_DIR/osmo-train-entry.sh"
+[[ -f "$entry_script" ]] || fatal "Entry script not found: $entry_script"
+entry_script_b64="$(base64 < "$entry_script" | tr -d '\n')"
+
 checkpoint_mode="$(normalize_checkpoint_mode "$checkpoint_mode")"
 
 if [[ "$skip_register" == "false" && -z "$register_checkpoint" ]]; then
@@ -169,6 +174,7 @@ if [[ "$skip_register" == "false" && -z "$register_checkpoint" ]]; then
 fi
 
 [[ "$skip_register" == "true" ]] && register_checkpoint=""
+workflow_name="${workflow_name:-${correlation_id:-isaaclab-inline-training}}"
 
 if [[ "$config_preview" == "true" ]]; then
   section "Configuration Preview"
@@ -189,6 +195,7 @@ if [[ "$config_preview" == "true" ]]; then
   print_kv "Resource Group" "${resource_group:-<not set>}"
   print_kv "Workspace" "${workspace_name:-<not set>}"
   print_kv "Storage Account" "${storage_account:-<not set>}"
+  print_kv "Workflow Name" "$workflow_name"
   print_kv "Correlation ID" "${correlation_id:-<not set>}"
   exit 0
 fi
@@ -211,7 +218,9 @@ info "Training payload uploaded: $code_url"
 submit_args=(
   workflow submit "$workflow"
   --set-string "image=$image"
+  "workflow_name=$workflow_name"
   "code_url=$code_url"
+  "entry_script_b64=$entry_script_b64"
   "task=$task"
   "num_envs=$num_envs"
   "payload_root=$payload_root"
@@ -263,6 +272,7 @@ print_kv "GPU" "$gpu"
 print_kv "Checkpoint Mode" "$checkpoint_mode"
 print_kv "Register Model" "${register_checkpoint:-<none>}"
 print_kv "Workflow" "$workflow"
+print_kv "Workflow Name" "$workflow_name"
 print_kv "Correlation ID" "${correlation_id:-<none>}"
 
 info "Workflow submitted successfully"

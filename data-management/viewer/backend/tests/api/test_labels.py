@@ -1,6 +1,8 @@
 """Integration and unit tests for label API endpoints."""
 
 import asyncio
+import hashlib
+import json
 import os
 import tempfile
 from types import SimpleNamespace
@@ -38,6 +40,12 @@ def client():
         labels_mod._label_storage = None
 
 
+def _revision_headers(client: TestClient, dataset_id: str) -> dict[str, str]:
+    response = client.get(f"/api/datasets/{dataset_id}/labels")
+    etag = response.headers.get("etag")
+    return {"If-Match": etag} if etag else {"If-None-Match": "*"}
+
+
 # ---------------------------------------------------------------------------
 # HTTP endpoint tests
 # ---------------------------------------------------------------------------
@@ -65,6 +73,7 @@ def test_add_label_option_normalizes_and_dedupes(client):
     response = client.post(
         "/api/datasets/test/labels/options",
         json={"label": " review "},
+        headers=_revision_headers(client, "test"),
     )
     assert response.status_code == 200
     assert response.json() == ["SUCCESS", "FAILURE", "PARTIAL", "REVIEW"]
@@ -73,6 +82,7 @@ def test_add_label_option_normalizes_and_dedupes(client):
     response = client.post(
         "/api/datasets/test/labels/options",
         json={"label": "review"},
+        headers=_revision_headers(client, "test"),
     )
     assert response.status_code == 200
     assert response.json() == ["SUCCESS", "FAILURE", "PARTIAL", "REVIEW"]
@@ -83,6 +93,7 @@ def test_add_label_option_rejects_empty(client):
     response = client.post(
         "/api/datasets/test/labels/options",
         json={"label": "   "},
+        headers=_revision_headers(client, "test"),
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "Label cannot be empty"
@@ -112,15 +123,37 @@ def test_set_episode_labels_auto_adds_and_invalidates_cache(client, monkeypatch)
     response = client.put(
         "/api/datasets/test/episodes/3/labels",
         json={"labels": [" custom ", "success"]},
+        headers={"If-None-Match": "*"},
     )
     assert response.status_code == 200
     body = response.json()
     assert body["episode_index"] == 3
     assert body["labels"] == ["CUSTOM", "SUCCESS"]
     assert invalidations == [("test", 3)]
+    assert response.headers["etag"]
 
     options = client.get("/api/datasets/test/labels/options").json()
     assert "CUSTOM" in options
+
+
+def test_set_episode_labels_rejects_stale_revision_without_modifying_labels(client):
+    created = client.put(
+        "/api/datasets/test/episodes/3/labels",
+        json={"labels": ["SUCCESS"]},
+        headers={"If-None-Match": "*"},
+    )
+
+    stale = client.put(
+        "/api/datasets/test/episodes/3/labels",
+        json={"labels": ["FAILURE"]},
+        headers={"If-Match": '"stale-revision"'},
+    )
+
+    assert created.status_code == 200
+    assert stale.status_code == 412
+    current = client.get("/api/datasets/test/labels")
+    assert current.headers["etag"] == created.headers["etag"]
+    assert current.json()["episodes"]["3"] == ["SUCCESS"]
 
 
 def test_save_all_labels_roundtrip(client):
@@ -128,8 +161,12 @@ def test_save_all_labels_roundtrip(client):
     client.put(
         "/api/datasets/test/episodes/1/labels",
         json={"labels": ["SUCCESS"]},
+        headers=_revision_headers(client, "test"),
     )
-    response = client.post("/api/datasets/test/labels/save")
+    response = client.post(
+        "/api/datasets/test/labels/save",
+        headers=_revision_headers(client, "test"),
+    )
     assert response.status_code == 200
     body = response.json()
     assert body["dataset_id"] == "test"
@@ -141,13 +178,18 @@ def test_delete_label_option_removes_assignments(client):
     client.put(
         "/api/datasets/test-dataset/episodes/1/labels",
         json={"labels": ["SUCCESS", "REVIEW"]},
+        headers=_revision_headers(client, "test-dataset"),
     )
     client.put(
         "/api/datasets/test-dataset/episodes/2/labels",
         json={"labels": ["REVIEW"]},
+        headers=_revision_headers(client, "test-dataset"),
     )
 
-    response = client.delete("/api/datasets/test-dataset/labels/options/review")
+    response = client.delete(
+        "/api/datasets/test-dataset/labels/options/review",
+        headers=_revision_headers(client, "test-dataset"),
+    )
 
     assert response.status_code == 200
     assert response.json() == ["SUCCESS", "FAILURE", "PARTIAL"]
@@ -160,7 +202,10 @@ def test_delete_label_option_removes_assignments(client):
 
 def test_delete_default_label_option_rejected(client):
     """Built-in labels should not be deletable."""
-    response = client.delete("/api/datasets/test-dataset/labels/options/success")
+    response = client.delete(
+        "/api/datasets/test-dataset/labels/options/success",
+        headers=_revision_headers(client, "test-dataset"),
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Built-in labels cannot be deleted"
@@ -168,9 +213,229 @@ def test_delete_default_label_option_rejected(client):
 
 def test_delete_label_option_rejects_empty(client):
     """Whitespace-only label name returns 400."""
-    response = client.delete("/api/datasets/test/labels/options/%20")
+    response = client.delete(
+        "/api/datasets/test/labels/options/%20",
+        headers=_revision_headers(client, "test"),
+    )
     assert response.status_code == 400
     assert response.json()["detail"] == "Label cannot be empty"
+
+
+def test_get_episode_analysis_unknown_returns_null(client):
+    """GET episode analysis returns null when no record exists."""
+    response = client.get("/api/datasets/test/episodes/4/analysis")
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_set_and_get_episode_analysis_roundtrip(client, monkeypatch):
+    """PUT analysis persists a structured record, invalidates cache, and rides along /labels."""
+    invalidations: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        "src.api.services.dataset_service.DatasetService.invalidate_episode_cache",
+        lambda self, dataset_id, episode_idx: invalidations.append((dataset_id, episode_idx)),
+    )
+
+    record = {
+        "pick_from": "front",
+        "object": "black cloth",
+        "grasp_success": True,
+        "place_success": False,
+        "movement_quality": "Smooth approach then a missed release.",
+        "notes": "Gripper opened early.",
+        "normalized_smoothness": 0.2,
+        "motion_score": 2,
+        "motion_flags": ["jittery"],
+        "source": "qwen3-vl",
+    }
+
+    put_resp = client.put(
+        "/api/datasets/test/episodes/5/analysis",
+        json=record,
+        headers=_revision_headers(client, "test"),
+    )
+    assert put_resp.status_code == 200
+    assert put_resp.json()["object"] == "black cloth"
+    assert invalidations == [("test", 5)]
+
+    get_resp = client.get("/api/datasets/test/episodes/5/analysis")
+    assert get_resp.status_code == 200
+    body = get_resp.json()
+    assert body["pick_from"] == "front"
+    assert body["grasp_success"] is True
+    assert body["place_success"] is False
+    assert body["motion_flags"] == ["jittery"]
+
+    # The full labels file carries the analysis map so it auto-loads with the dataset.
+    labels = client.get("/api/datasets/test/labels").json()
+    assert labels["analysis"]["5"]["object"] == "black cloth"
+
+
+def test_import_analysis_labels_handles_scalar_boolean_and_list_values(client, monkeypatch):
+    """Analysis imports normalize supported value types and invalidate the dataset cache."""
+    invalidations: list[tuple[str, int | None]] = []
+    monkeypatch.setattr(
+        "src.api.services.dataset_service.DatasetService.invalidate_episode_cache",
+        lambda self, dataset_id, episode_idx=None: invalidations.append((dataset_id, episode_idx)),
+    )
+
+    client.put(
+        "/api/datasets/test/episodes/0/analysis",
+        json={"object": "Black Cloth", "grasp_success": True, "motion_flags": ["jittery", "hesitation"]},
+        headers=_revision_headers(client, "test"),
+    )
+    client.put(
+        "/api/datasets/test/episodes/1/analysis",
+        json={"object": "Black Cloth", "grasp_success": False, "motion_flags": []},
+        headers=_revision_headers(client, "test"),
+    )
+    invalidations.clear()
+
+    object_response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "object", "prefix": "item"},
+        headers=_revision_headers(client, "test"),
+    )
+    assert object_response.status_code == 200
+    assert object_response.json()["labels_added"] == ["ITEM: BLACK CLOTH"]
+    assert object_response.json()["episodes_updated"] == 2
+
+    grasp_response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "grasp_success"},
+        headers=_revision_headers(client, "test"),
+    )
+    assert grasp_response.status_code == 200
+    assert grasp_response.json()["labels_added"] == ["GRASP: YES", "GRASP: NO"]
+    assert grasp_response.json()["episodes_updated"] == 2
+
+    flags_response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "motion_flags"},
+        headers=_revision_headers(client, "test"),
+    )
+    assert flags_response.status_code == 200
+    assert flags_response.json()["labels_added"] == ["FLAG: JITTERY", "FLAG: HESITATION"]
+    assert flags_response.json()["episodes_updated"] == 1
+    assert invalidations == [("test", None), ("test", None), ("test", None)]
+
+
+def test_import_analysis_labels_overwrites_stale_namespace_and_is_idempotent(client, monkeypatch):
+    """Overwrite removes stale namespace values and repeated imports make no changes."""
+    invalidations: list[tuple[str, int | None]] = []
+    monkeypatch.setattr(
+        "src.api.services.dataset_service.DatasetService.invalidate_episode_cache",
+        lambda self, dataset_id, episode_idx=None: invalidations.append((dataset_id, episode_idx)),
+    )
+
+    client.put(
+        "/api/datasets/test/episodes/2/labels",
+        json={"labels": ["SUCCESS", "OBJECT: OLD"]},
+        headers=_revision_headers(client, "test"),
+    )
+    client.put(
+        "/api/datasets/test/episodes/2/analysis",
+        json={"object": "new"},
+        headers=_revision_headers(client, "test"),
+    )
+    invalidations.clear()
+
+    response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "object", "overwrite": True},
+        headers=_revision_headers(client, "test"),
+    )
+    assert response.status_code == 200
+    assert response.json()["episodes"]["2"] == ["SUCCESS", "OBJECT: NEW"]
+    assert response.json()["episodes_updated"] == 1
+    assert invalidations == [("test", None)]
+
+    invalidations.clear()
+    repeated = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "object", "overwrite": True},
+        headers=_revision_headers(client, "test"),
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["labels_added"] == []
+    assert repeated.json()["episodes_updated"] == 0
+    assert invalidations == []
+
+
+def test_import_analysis_labels_overwrite_removes_stale_values_without_current_analysis(client):
+    client.put(
+        "/api/datasets/test/episodes/0/labels",
+        json={"labels": ["SUCCESS", "OBJECT: OLD"]},
+        headers=_revision_headers(client, "test"),
+    )
+    client.put(
+        "/api/datasets/test/episodes/1/labels",
+        json={"labels": ["OBJECT: STALE"]},
+        headers=_revision_headers(client, "test"),
+    )
+    client.put(
+        "/api/datasets/test/episodes/0/analysis",
+        json={"object": "new"},
+        headers=_revision_headers(client, "test"),
+    )
+    client.put(
+        "/api/datasets/test/episodes/1/analysis",
+        json={"notes": "No object value"},
+        headers=_revision_headers(client, "test"),
+    )
+
+    response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "object", "overwrite": True},
+        headers=_revision_headers(client, "test"),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["episodes"]["0"] == ["SUCCESS", "OBJECT: NEW"]
+    assert body["episodes"]["1"] == []
+    assert "OBJECT: OLD" not in body["available_labels"]
+    assert "OBJECT: STALE" not in body["available_labels"]
+
+
+def test_import_analysis_labels_rejects_unsupported_field(client):
+    """Free-text and unknown analysis fields cannot become dataset labels."""
+    response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "movement_quality"},
+        headers=_revision_headers(client, "test"),
+    )
+    assert response.status_code == 400
+    assert "is not importable" in response.json()["detail"]
+
+
+def test_analysis_value_labels_ignores_absent_and_blank_values():
+    """Missing and blank analysis values do not produce filter labels."""
+    assert labels_mod._analysis_value_labels("OBJECT", None) == []
+    assert labels_mod._analysis_value_labels("OBJECT", [" ", None]) == []
+
+
+def test_import_analysis_labels_without_values_does_not_persist(client, monkeypatch):
+    """An import with no populated values is a no-op."""
+    save = AsyncMock()
+    invalidations: list[tuple[str, int | None]] = []
+    monkeypatch.setattr(labels_mod, "_save_labels", save)
+    monkeypatch.setattr(
+        "src.api.services.dataset_service.DatasetService.invalidate_episode_cache",
+        lambda self, dataset_id, episode_idx=None: invalidations.append((dataset_id, episode_idx)),
+    )
+
+    response = client.post(
+        "/api/datasets/test/labels/import-from-analysis",
+        json={"field": "source"},
+        headers=_revision_headers(client, "test"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["labels_added"] == []
+    assert response.json()["episodes_updated"] == 0
+    save.assert_not_awaited()
+    assert invalidations == []
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +499,45 @@ def test_blob_label_storage_load_missing_returns_defaults():
     assert result.available_labels == ["SUCCESS", "FAILURE", "PARTIAL"]
 
 
+def test_blob_label_storage_load_uses_provider_etag():
+    """BlobLabelStorage prefers the provider's native ETag when available."""
+    blob_client = SimpleNamespace(get_blob_properties=AsyncMock(return_value=SimpleNamespace(etag='"azure-revision"')))
+    container = MagicMock()
+    container.get_blob_client.return_value = blob_client
+    client = MagicMock()
+    client.get_container_client.return_value = container
+    provider = SimpleNamespace(
+        _read_blob_bytes=AsyncMock(
+            return_value=json.dumps(labels_mod.DatasetLabelsFile(dataset_id="ds").model_dump()).encode()
+        ),
+        _get_client=AsyncMock(return_value=client),
+        container_name="datasets",
+    )
+    storage = labels_mod.BlobLabelStorage(provider)
+
+    result = asyncio.run(storage.load_versioned("ds"))
+
+    assert result.etag == '"azure-revision"'
+    assert result.value is not None
+    assert result.value.dataset_id == "ds"
+
+
+def test_blob_label_storage_load_falls_back_when_provider_etag_fails():
+    """BlobLabelStorage retains its content ETag when provider metadata fails."""
+    content = json.dumps(labels_mod.DatasetLabelsFile(dataset_id="ds").model_dump()).encode()
+    provider = SimpleNamespace(
+        _read_blob_bytes=AsyncMock(return_value=content),
+        _get_client=AsyncMock(side_effect=RuntimeError("metadata unavailable")),
+        container_name="datasets",
+    )
+    storage = labels_mod.BlobLabelStorage(provider)
+
+    result = asyncio.run(storage.load_versioned("ds"))
+
+    assert result.etag == f'"{hashlib.sha256(content).hexdigest()}"'
+    assert result.value is not None
+
+
 def test_blob_label_storage_save_uploads_json():
     """BlobLabelStorage.save uploads serialized JSON via the blob client."""
     blob_client = SimpleNamespace(upload_blob=AsyncMock())
@@ -254,6 +558,56 @@ def test_blob_label_storage_save_uploads_json():
     client.get_container_client.assert_called_once_with("datasets")
     container.get_blob_client.assert_called_once()
     blob_client.upload_blob.assert_awaited_once()
+
+
+def test_blob_label_storage_save_uses_matching_revision(monkeypatch):
+    """Blob label updates use Azure native ETag matching."""
+    match_conditions = SimpleNamespace(IfNotModified="if-not-modified")
+    monkeypatch.setattr(labels_mod, "MatchConditions", match_conditions)
+    blob_client = SimpleNamespace(upload_blob=AsyncMock(return_value={"etag": '"revision-two"'}))
+    container = MagicMock()
+    container.get_blob_client.return_value = blob_client
+    client = MagicMock()
+    client.get_container_client.return_value = container
+    provider = SimpleNamespace(_get_client=AsyncMock(return_value=client), container_name="datasets")
+    storage = labels_mod.BlobLabelStorage(provider)
+
+    etag = asyncio.run(
+        storage.save(
+            "ds",
+            labels_mod.DatasetLabelsFile(dataset_id="ds"),
+            if_match='"revision-one"',
+        )
+    )
+
+    assert etag == '"revision-two"'
+    kwargs = blob_client.upload_blob.await_args.kwargs
+    assert kwargs["etag"] == '"revision-one"'
+    assert kwargs["match_condition"] == "if-not-modified"
+
+
+def test_blob_label_storage_save_uses_create_only_precondition():
+    """Blob label creation sends Azure's create-only precondition."""
+    blob_client = SimpleNamespace(upload_blob=AsyncMock(return_value={}))
+    container = MagicMock()
+    container.get_blob_client.return_value = blob_client
+    client = MagicMock()
+    client.get_container_client.return_value = container
+    provider = SimpleNamespace(_get_client=AsyncMock(return_value=client), container_name="datasets")
+    storage = labels_mod.BlobLabelStorage(provider)
+
+    etag = asyncio.run(
+        storage.save(
+            "ds",
+            labels_mod.DatasetLabelsFile(dataset_id="ds"),
+            if_none_match=True,
+        )
+    )
+
+    kwargs = blob_client.upload_blob.await_args.kwargs
+    assert kwargs["overwrite"] is False
+    assert kwargs["if_none_match"] == "*"
+    assert etag.startswith('"') and etag.endswith('"')
 
 
 def test_blob_label_storage_save_failure_raises_500(monkeypatch):
@@ -278,9 +632,34 @@ def test_blob_label_storage_save_failure_raises_500(monkeypatch):
     assert logged and logged[0][1] == "dsx"
 
 
+@pytest.mark.parametrize(
+    ("if_match", "if_none_match", "expected_status"),
+    [
+        (None, None, 428),
+        ('"revision"', "*", 400),
+        (None, '"revision"', 400),
+    ],
+)
+def test_revision_precondition_rejects_invalid_header_combinations(if_match, if_none_match, expected_status):
+    """Revision preconditions reject missing, conflicting, and non-wildcard headers."""
+    with pytest.raises(HTTPException) as exc_info:
+        labels_mod.require_revision_precondition(if_match, if_none_match)
+
+    assert exc_info.value.status_code == expected_status
+
+
 # ---------------------------------------------------------------------------
 # Factory + singleton wiring
 # ---------------------------------------------------------------------------
+
+
+def test_labels_path_resolves_nested_dataset_id(monkeypatch, tmp_path):
+    """Nested dataset IDs resolve to the expected labels metadata path."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    path = labels_mod._labels_path("owner--dataset")
+
+    assert path == tmp_path / "owner" / "dataset" / "meta" / "episode_labels.json"
 
 
 def test_create_label_storage_returns_local_when_no_provider():
@@ -315,5 +694,25 @@ def test_get_label_storage_singleton(monkeypatch):
     second = labels_mod._get_label_storage()
     assert first is second
     assert isinstance(first, labels_mod.LocalLabelStorage)
+
+    monkeypatch.setattr(labels_mod, "_label_storage", None)
+
+
+def test_get_label_storage_creates_azure_provider_once(monkeypatch):
+    """Azure label storage creates one provider and caches the resulting adapter."""
+    monkeypatch.setattr(labels_mod, "_label_storage", None)
+    fake_config = SimpleNamespace(storage_backend="azure")
+    provider = SimpleNamespace()
+    create_provider = MagicMock(return_value=provider)
+    monkeypatch.setattr("src.api.config.get_app_config", lambda: fake_config)
+    monkeypatch.setattr("src.api.config.create_blob_dataset_provider", create_provider)
+
+    first = labels_mod._get_label_storage()
+    second = labels_mod._get_label_storage()
+
+    assert first is second
+    assert isinstance(first, labels_mod.BlobLabelStorage)
+    assert first._provider is provider
+    create_provider.assert_called_once_with(fake_config)
 
     monkeypatch.setattr(labels_mod, "_label_storage", None)

@@ -173,6 +173,24 @@ start_backend() {
     local vlm_judge_package_spec="${REPO_ROOT}/evaluation/vlm_judge"
     local should_install_vlm_judge=false
 
+    # Resolve VLM_JUDGE_ENABLED from shell env first, then fall back to backend/.env
+    # so that setting it only in .env (the common local-dev pattern) still triggers install.
+    if [[ -z "${VLM_JUDGE_ENABLED:-}" ]] && [[ -f "${BACKEND_DIR}/.env" ]]; then
+        local env_vlm_enabled
+        env_vlm_enabled="$(sed -n 's/^VLM_JUDGE_ENABLED=//p' "${BACKEND_DIR}/.env" | tail -n 1)"
+        if [[ -n "${env_vlm_enabled}" ]]; then
+            VLM_JUDGE_ENABLED="${env_vlm_enabled}"
+        fi
+    fi
+    # Similarly resolve VLM_JUDGE_BACKEND from .env when not already set.
+    if [[ -z "${VLM_JUDGE_BACKEND:-}" ]] && [[ -f "${BACKEND_DIR}/.env" ]]; then
+        local env_vlm_backend
+        env_vlm_backend="$(sed -n 's/^VLM_JUDGE_BACKEND=//p' "${BACKEND_DIR}/.env" | tail -n 1)"
+        if [[ -n "${env_vlm_backend}" ]]; then
+            VLM_JUDGE_BACKEND="${env_vlm_backend}"
+        fi
+    fi
+
     if [[ "${VLM_JUDGE_ENABLED:-false}" == "true" ]]; then
         should_install_vlm_judge=true
         if [[ "${VLM_JUDGE_BACKEND:-echo}" == "qwen3-vl" ]]; then
@@ -188,8 +206,18 @@ start_backend() {
         log_info "Defaulting DATAVIEWER_AUTH_DISABLED=true for local development"
     fi
 
-    # Resolve datasets directory: prefer explicit DATA_DIR, otherwise default
-    # to <repo>/datasets (../../datasets relative to this script).
+    # Resolve datasets directory: prefer explicit DATA_DIR, then backend/.env,
+    # otherwise default to <repo>/datasets.
+    if [[ -z "${DATA_DIR:-}" ]]; then
+        if [[ -f "${BACKEND_DIR}/.env" ]]; then
+            local env_data_dir
+            env_data_dir="$(sed -n 's/^DATA_DIR=//p' "${BACKEND_DIR}/.env" | tail -n 1)"
+            if [[ -n "${env_data_dir}" ]]; then
+                DATA_DIR="${env_data_dir}"
+                log_info "Using DATA_DIR from backend/.env: ${DATA_DIR}"
+            fi
+        fi
+    fi
     if [[ -z "${DATA_DIR:-}" ]]; then
         DATA_DIR="${REPO_ROOT}/datasets"
         log_info "Defaulting DATA_DIR=${DATA_DIR}"
@@ -206,8 +234,10 @@ start_backend() {
 
         if command -v uv &>/dev/null; then
             (cd "${BACKEND_DIR}" && uv venv --python 3.12)
+            # shellcheck source=/dev/null
             (cd "${BACKEND_DIR}" && source .venv/bin/activate && uv pip install -e "${backend_install_extras}")
             if [[ "${should_install_vlm_judge}" == "true" ]]; then
+                # shellcheck source=/dev/null
                 (cd "${BACKEND_DIR}" && source .venv/bin/activate && uv pip install -e "${vlm_judge_package_spec}")
             fi
         else
@@ -216,7 +246,9 @@ start_backend() {
         fi
     elif [[ "${should_install_vlm_judge}" == "true" ]]; then
         log_info "Ensuring VLM judge package dependencies are installed..."
+        # shellcheck source=/dev/null
         (cd "${BACKEND_DIR}" && source .venv/bin/activate && uv pip install -e "${backend_install_extras}")
+        # shellcheck source=/dev/null
         (cd "${BACKEND_DIR}" && source .venv/bin/activate && uv pip install -e "${vlm_judge_package_spec}")
     fi
 
@@ -231,20 +263,28 @@ start_backend() {
     log_info "Backend started (PID: ${BACKEND_PID})"
 }
 
+resolve_vite_bin() {
+    local vite_package
+    vite_package="$(cd "${FRONTEND_DIR}" && node -p 'require.resolve("vite/package.json")')" || return 1
+    printf '%s/bin/vite.js\n' "${vite_package%/*}"
+}
+
 start_frontend() {
     log_info "Starting frontend on port ${FRONTEND_PORT}..."
     local frontend_api_base_url="${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT}}"
+    local vite_bin
 
-    if [[ ! -d "${FRONTEND_DIR}/node_modules" ]]; then
+    if [[ ! -d "${REPO_ROOT}/node_modules" ]]; then
         log_warn "node_modules not found"
         log_info "Installing dependencies..."
-        (cd "${FRONTEND_DIR}" && npm ci)
+        (cd "${REPO_ROOT}" && npm ci)
     fi
+    vite_bin="$(resolve_vite_bin)"
 
     (
         cd "${FRONTEND_DIR}"
         VITE_API_BASE_URL="${frontend_api_base_url}" \
-            exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port "${FRONTEND_PORT}" --strictPort 2>&1
+            exec node "${vite_bin}" --host 127.0.0.1 --port "${FRONTEND_PORT}" --strictPort 2>&1
     ) &
     FRONTEND_PID=$!
 
@@ -303,9 +343,12 @@ main() {
             log_error "Backend environment is missing; run the dataviewer launcher to install it"
             return 1
         fi
-        if [[ "${backend_only}" != "true" && ! -f "${FRONTEND_DIR}/node_modules/vite/bin/vite.js" ]]; then
-            log_error "Frontend dependencies are missing; run npm ci in ${FRONTEND_DIR}"
-            return 1
+        if [[ "${backend_only}" != "true" ]]; then
+            local vite_bin
+            if ! vite_bin="$(resolve_vite_bin)" || [[ ! -f "${vite_bin}" ]]; then
+                log_error "Frontend dependencies are missing; run npm ci in ${REPO_ROOT}"
+                return 1
+            fi
         fi
         log_success "Launch prerequisites are available; no services started"
         return 0
@@ -345,8 +388,10 @@ main() {
             log_info "Press Ctrl+C to stop all services"
             echo ""
 
-            # Wait for either process to exit
-            wait -n "${BACKEND_PID}" "${FRONTEND_PID}"
+            # Bash 3.2 on macOS does not support wait -n.
+            while kill -0 "${BACKEND_PID}" 2>/dev/null && kill -0 "${FRONTEND_PID}" 2>/dev/null; do
+                sleep 1
+            done
             log_error "A service exited unexpectedly"
             return 1
         else

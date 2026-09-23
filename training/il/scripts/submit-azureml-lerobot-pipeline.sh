@@ -352,6 +352,16 @@ if [[ "$config_preview" == "true" ]]; then
   exit 0
 fi
 
+train_managed_identity_client_id=$(resolve_azureml_compute_identity_client_id \
+  "$compute_train" "$resource_group" "$workspace_name")
+evaluate_managed_identity_client_id=$(resolve_azureml_compute_identity_client_id \
+  "$compute_evaluate" "$resource_group" "$workspace_name")
+register_managed_identity_client_id=""
+if [[ "$with_register" == "true" ]]; then
+  register_managed_identity_client_id=$(resolve_azureml_compute_identity_client_id \
+    "$compute_register" "$resource_group" "$workspace_name")
+fi
+
 #------------------------------------------------------------------------------
 # Build Submission Command
 #
@@ -431,6 +441,7 @@ az_args+=(
 [[ -n "$training_steps" ]]      && az_args+=(--set "jobs.train_step.environment_variables.TRAINING_STEPS=$training_steps")
 [[ -n "$batch_size" ]]          && az_args+=(--set "jobs.train_step.environment_variables.BATCH_SIZE=$batch_size")
 [[ -n "$eval_freq" ]]           && az_args+=(--set "jobs.train_step.environment_variables.EVAL_FREQ=$eval_freq")
+[[ -n "$train_managed_identity_client_id" ]] && az_args+=(--set "jobs.train_step.environment_variables.AZURE_CLIENT_ID=$train_managed_identity_client_id")
 
 # evaluate_step
 az_args+=(
@@ -446,6 +457,7 @@ az_args+=(
   --set "jobs.evaluate_step.environment_variables.MLFLOW_HTTP_REQUEST_TIMEOUT=$mlflow_timeout"
 )
 [[ -n "$lerobot_version" ]] && az_args+=(--set "jobs.evaluate_step.environment_variables.LEROBOT_VERSION=$lerobot_version")
+[[ -n "$evaluate_managed_identity_client_id" ]] && az_args+=(--set "jobs.evaluate_step.environment_variables.AZURE_CLIENT_ID=$evaluate_managed_identity_client_id")
 
 # register_step (opt-in)
 if [[ "$with_register" == "true" ]]; then
@@ -457,6 +469,7 @@ if [[ "$with_register" == "true" ]]; then
     --set "jobs.register_step.environment_variables.AZURE_RESOURCE_GROUP=$resource_group"
     --set "jobs.register_step.environment_variables.AZUREML_WORKSPACE_NAME=$workspace_name"
   )
+  [[ -n "$register_managed_identity_client_id" ]] && az_args+=(--set "jobs.register_step.environment_variables.AZURE_CLIENT_ID=$register_managed_identity_client_id")
 fi
 
 [[ ${#forward_args[@]} -gt 0 ]] && az_args+=("${forward_args[@]}")
@@ -475,7 +488,7 @@ info "  Policy Type: $policy_type"
 info "  Job Name: $job_name"
 [[ "$with_register" == "true" ]] && info "  Register Model: $register_model_name"
 
-# shellcheck disable=SC2329  # invoked indirectly via `trap`
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via `trap`
 _interrupt_message() {
   error "Interrupted while waiting for az ml job create. The pipeline may have been submitted."
   error "Check: https://ml.azure.com/runs?wsid=/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.MachineLearningServices/workspaces/${workspace_name}"

@@ -6,6 +6,7 @@ acrolinx
 activex
 acunetix
 addfinalizer
+addinivalue
 adobe
 adrm
 adrs
@@ -451,6 +452,7 @@ flatdict
 flatmap
 flexbox
 Flink
+flushall
 fluentbit
 fluentd
 fluxcd
@@ -711,6 +713,7 @@ linktype
 linq
 linting
 linuxvm
+manylinux
 livecache
 liveops
 Llamacpp
@@ -936,6 +939,7 @@ owaspzap
 Oxley
 paas
 palantir
+paligemma
 palettegen
 paletteuse
 palo
@@ -1052,6 +1056,7 @@ pylance
 pyodbc
 pypi
 pytest
+pytrace
 python
 PYTHONHASHSEED
 PYTHONPATH
@@ -1409,6 +1414,7 @@ Trino
 trivy
 trufflehog
 trustexitcode
+tryfirst
 turbonomic
 twilio
 typeparam

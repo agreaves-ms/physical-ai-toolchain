@@ -19,6 +19,14 @@ updates:
       update-types:
       - minor
       - patch
+  # Remove when eslint-plugin-jsx-a11y and eslint-plugin-react support ESLint 10.
+  ignore:
+  - dependency-name: "@eslint/js"
+    versions:
+    - ">=10"
+  - dependency-name: eslint
+    versions:
+    - ">=10"
   open-pull-requests-limit: 5
   labels:
   - dependencies
@@ -126,9 +134,39 @@ updates:
   - dependency-name: "marshmallow"
     versions:
     - ">=4.0.0"
-  - dependency-name: "torch"
+  - dependency-name: "numpy"
     versions:
-    - ">=2.11.0"
+    - ">=2.3.0"
+  - dependency-name: "packaging"
+    versions:
+    - ">=26.0"
+  labels:
+  - dependencies
+  - python
+  - training
+  commit-message:
+    prefix: chore
+    include: scope
+- package-ecosystem: uv
+  directory: /training/vla/lerobot
+  schedule:
+    interval: weekly
+    day: monday
+  cooldown:
+    default-days: 7
+    semver-major-days: 14
+  groups:
+    vla-lerobot-dependencies:
+      patterns:
+      - "*"
+      update-types:
+      - minor
+      - patch
+  open-pull-requests-limit: 5
+  ignore:
+  - dependency-name: "marshmallow"
+    versions:
+    - ">=4.0.0"
   - dependency-name: "numpy"
     versions:
     - ">=2.3.0"
@@ -162,9 +200,6 @@ updates:
   - dependency-name: "marshmallow"
     versions:
     - ">=4.0.0"
-  - dependency-name: "torch"
-    versions:
-    - ">=2.11.0"
   - dependency-name: "numpy"
     versions:
     - ">=2.3.0"
@@ -174,33 +209,6 @@ updates:
   labels:
   - dependencies
   - python
-  commit-message:
-    prefix: chore
-    include: scope
-- package-ecosystem: uv
-  directory: /evaluation/sil/docker
-  schedule:
-    interval: weekly
-    day: monday
-  cooldown:
-    default-days: 7
-    semver-major-days: 14
-  groups:
-    lerobot-eval-image-dependencies:
-      patterns:
-      - "*"
-      update-types:
-      - minor
-      - patch
-  open-pull-requests-limit: 5
-  ignore:
-  - dependency-name: "av"
-    versions:
-    - ">=16.0.0"
-  labels:
-  - dependencies
-  - python
-  - evaluation
   commit-message:
     prefix: chore
     include: scope
@@ -364,29 +372,6 @@ updates:
     prefix: chore
     include: scope
 - package-ecosystem: uv
-  directory: /data-management/viewer
-  schedule:
-    interval: weekly
-    day: monday
-  cooldown:
-    default-days: 7
-    semver-major-days: 14
-  groups:
-    dataviewer-dependencies:
-      patterns:
-      - "*"
-      update-types:
-      - minor
-      - patch
-  open-pull-requests-limit: 5
-  labels:
-  - dependencies
-  - python
-  - dataviewer
-  commit-message:
-    prefix: chore
-    include: scope
-- package-ecosystem: uv
   directory: /data-management/viewer/backend
   schedule:
     interval: weekly
@@ -405,29 +390,6 @@ updates:
   labels:
   - dependencies
   - python
-  - dataviewer
-  commit-message:
-    prefix: chore
-    include: scope
-- package-ecosystem: npm
-  directory: /data-management/viewer/frontend
-  schedule:
-    interval: weekly
-    day: monday
-  cooldown:
-    default-days: 7
-    semver-major-days: 14
-  groups:
-    dataviewer-frontend-patch-minor:
-      patterns:
-      - "*"
-      update-types:
-      - minor
-      - patch
-  open-pull-requests-limit: 10
-  labels:
-  - dependencies
-  - npm
   - dataviewer
   commit-message:
     prefix: chore
@@ -519,14 +481,14 @@ updates:
     prefix: chore
     include: scope
 - package-ecosystem: docker
-  directory: /evaluation/sil/docker
+  directory: /gpu-offload/controller
   schedule:
     interval: weekly
     day: monday
   cooldown:
     default-days: 7
   groups:
-    lerobot-eval-docker-dependencies:
+    gpu-offload-controller-docker-dependencies:
       patterns:
       - "*"
       update-types:
@@ -536,6 +498,73 @@ updates:
   labels:
   - dependencies
   - docker
+  - gpu-offload
+  commit-message:
+    prefix: chore
+    include: scope
+- package-ecosystem: docker
+  directory: /gpu-offload/examples/first-run
+  schedule:
+    interval: weekly
+    day: monday
+  cooldown:
+    default-days: 7
+  groups:
+    gpu-offload-examples-first-run-docker-dependencies:
+      patterns:
+      - "*"
+      update-types:
+      - minor
+      - patch
+  open-pull-requests-limit: 5
+  labels:
+  - dependencies
+  - docker
+  - gpu-offload
+  commit-message:
+    prefix: chore
+    include: scope
+- package-ecosystem: docker
+  directory: /gpu-offload/examples/ur10e-single
+  schedule:
+    interval: weekly
+    day: monday
+  cooldown:
+    default-days: 7
+  groups:
+    gpu-offload-examples-ur10e-single-docker-dependencies:
+      patterns:
+      - "*"
+      update-types:
+      - minor
+      - patch
+  open-pull-requests-limit: 5
+  labels:
+  - dependencies
+  - docker
+  - gpu-offload
+  commit-message:
+    prefix: chore
+    include: scope
+- package-ecosystem: docker
+  directory: /gpu-offload/examples/so101-real-hardware/docker
+  schedule:
+    interval: weekly
+    day: monday
+  cooldown:
+    default-days: 7
+  groups:
+    gpu-offload-examples-so101-real-hardware-docker-dependencies:
+      patterns:
+      - "*"
+      update-types:
+      - minor
+      - patch
+  open-pull-requests-limit: 5
+  labels:
+  - dependencies
+  - docker
+  - gpu-offload
   commit-message:
     prefix: chore
     include: scope

@@ -11,9 +11,9 @@ Launch and interact with the Dataset Analysis Tool — a full-stack application 
 
 | Platform | Requirement                          |
 |----------|--------------------------------------|
-| All      | Python 3.12+, Node.js 18+, npm, `uv` |
+| All      | Python 3.12+, Node.js 24+, npm, `uv` |
 
-The backend virtual environment and frontend `node_modules` are auto-created on first launch by `start.sh`.
+The backend virtual environment and repository-root npm workspace dependencies are auto-created on first launch by `start.sh`.
 
 ## Launch and Connect Workflow
 
@@ -337,6 +337,10 @@ The `meta` field of the episode response contains `index`, `length`, `task_index
 
 Analyze gripper and joint data at multiple time points to classify episodes. Check the midpoint first, then 25% and 75% for episodes where grasp actions happen earlier or later:
 
+Resolve gripper channels and units from the dataset's declared features and verified
+capture profile before assigning grasp labels. The example below assumes a verified
+16-joint bimanual layout; do not reuse its offsets for single-arm datasets.
+
 ```python
 # Example: check grip values at multiple points for robust classification
 for pct in [25, 50, 75]:
@@ -351,45 +355,62 @@ for pct in [25, 50, 75]:
 
 ### Step 3 — Apply labels via API
 
-Use the PUT endpoint for each episode:
+Successful PUT requests persist immediately. Label mutations require the latest
+dataset-label ETag in `If-Match`, or `If-None-Match: *` when the GET response has no
+ETag yet. Stop and reconcile after HTTP 412; do not overwrite another writer's changes.
+
+These examples use the launcher's loopback-only development mode with
+`DATAVIEWER_AUTH_DISABLED=true`. Authenticated servers also require authentication
+and CSRF headers; the frontend supplies them automatically.
 
 ```bash
-curl -s -X PUT "http://localhost:8000/api/datasets/{dataset_id}/episodes/{idx}/labels" \
+curl -i -fsS "http://localhost:8000/api/datasets/{dataset_id}/labels"
+curl -fsS -X PUT "http://localhost:8000/api/datasets/{dataset_id}/episodes/{idx}/labels" \
   -H "Content-Type: application/json" \
+  -H 'If-Match: "<ETag from the GET response>"' \
   -d '{"labels": ["RIGHT", "SUCCESS"]}'
 ```
 
 For bulk annotation, loop over episodes in a script:
 
 ```python
-import json, urllib.request
+from __future__ import annotations
+
+import json
+from urllib.request import Request, urlopen
 
 
-def annotate(dataset_id, episode_idx, labels):
+def annotate(dataset_id: str, episode_idx: int, labels: list[str]) -> dict[str, object]:
+    dataset_url = f"http://localhost:8000/api/datasets/{dataset_id}"
+    with urlopen(f"{dataset_url}/labels") as response:
+        etag = response.headers.get("ETag")
+    headers = {"Content-Type": "application/json"}
+    headers["If-Match" if etag else "If-None-Match"] = etag or "*"
     data = json.dumps({"labels": labels}).encode()
-    req = urllib.request.Request(
-        f"http://localhost:8000/api/datasets/{dataset_id}/episodes/{episode_idx}/labels",
+    req = Request(
+        f"{dataset_url}/episodes/{episode_idx}/labels",
         data=data,
         method="PUT",
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
-    return json.loads(urllib.request.urlopen(req).read())
+    with urlopen(req) as response:
+        return json.load(response)
 ```
 
-### Step 4 — Persist labels
+### Step 4 — Verify persisted labels
 
-After applying labels via the API, persist them to disk:
+Read back the saved labels after applying changes:
 
 ```bash
-curl -s -X POST "http://localhost:8000/api/datasets/{dataset_id}/labels/save"
+curl -fsS "http://localhost:8000/api/datasets/{dataset_id}/labels"
 ```
 
-> [!WARNING]
-> Labels applied via PUT are held in memory until saved. Always call the save endpoint after bulk annotation to avoid data loss.
+The optional `POST /labels/save` endpoint confirms persistence and also requires a
+current revision precondition. It is not needed after a successful PUT.
 
 #### Label storage on disk
 
-The save endpoint writes labels to a JSON file inside the dataset's `meta/` directory:
+In local storage mode, successful label mutations write inside the dataset's `meta/` directory:
 
 ```text
 {DATA_DIR}/{dataset_id}/meta/episode_labels.json
@@ -443,7 +464,7 @@ For individual episode review or correction:
 1. Click an episode in the sidebar (`aside li button` elements).
 2. Scroll to the "Edit Tools" / "Episode Labels" section using `browser_evaluate` with `scrollIntoView`.
 3. Toggle label buttons (SUCCESS, FAILURE, PARTIAL, or custom labels) — clicking a selected label removes it.
-4. Click "Save All" to persist.
+4. Click "Save & Next Episode" to persist and continue, or "Save Episode" on the final episode.
 
 ## Frontend UI Structure
 
@@ -467,7 +488,7 @@ The React app has these key areas for Playwright interaction:
 | No datasets visible                      | Check `DATA_DIR` in `backend/.env` points to a directory with dataset subdirectories                                                               |
 | Port conflict                            | Set `BACKEND_PORT` or `FRONTEND_PORT` environment variables                                                                                        |
 | CORS errors                              | Backend allows localhost ports 5173-5177; check the frontend port is in range                                                                      |
-| Labels not persisted after restart       | Call `POST /api/datasets/{id}/labels/save` after API-based annotation                                                                              |
+| Labels not persisted after restart       | Check the PUT response; resolve any HTTP 412 revision conflict, then verify the saved labels with GET                                              |
 | Playwright opens separate Chrome window  | Ensure `--headless` is in the Playwright MCP args in `.vscode/mcp.json`; restart the MCP server after changing                                     |
 | Snapshot refs stale after navigation     | Always take a fresh `browser_snapshot` before clicking; refs change on page updates                                                                |
 | Slider not responding to Playwright      | Use `browser_evaluate` with native input value setter and dispatch `input` + `change` events                                                       |
@@ -493,7 +514,7 @@ VLM_JUDGE_CACHE_DIR=outputs/vlm-judge/cache
 ```
 
 > [!IMPORTANT]
-> Restart the backend after editing `.env`. Uvicorn `--reload` re-reads code, not env vars. The frontend auto-detects backend state via `GET /api/datasets/{id}/episodes/{idx}/judge`.
+> Restart the backend after editing `.env`. Uvicorn `--reload` re-reads code, not env vars. The frontend reads `vlm_judge_enabled` from `GET /api/datasets/{id}/capabilities` before requesting an episode judgment.
 
 ### Backends at a glance
 

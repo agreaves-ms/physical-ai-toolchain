@@ -23,9 +23,14 @@ jobs:
       training: ${{ steps.filter.outputs.training }}
       rl: ${{ steps.filter.outputs.rl }}
       il: ${{ steps.filter.outputs.il }}
+      vla: ${{ steps.filter.outputs.vla }}
+      evaluation: ${{ steps.filter.outputs.evaluation }}
+      osmo_replay: ${{ steps.filter.outputs.osmo_replay }}
       dm_tools: ${{ steps.filter.outputs.dm_tools }}
       data_pipeline: ${{ steps.filter.outputs.data_pipeline }}
       inference: ${{ steps.filter.outputs.inference }}
+      gpu_offload: ${{ steps.filter.outputs.gpu_offload }}
+      gpu_offload_e2e: ${{ steps.filter.outputs.gpu_offload_e2e }}
       shared_ci: ${{ steps.filter.outputs.shared_ci }}
       dv_backend: ${{ steps.filter.outputs.dv_backend }}
       dv_frontend: ${{ steps.filter.outputs.dv_frontend }}
@@ -59,13 +64,23 @@ jobs:
           {
             echo "training=$(match '^training/')"
             echo "rl=$(match '^(training/rl/|shared/ci/|scripts/lib/common\.sh|\.github/workflows/smoke-cpu\.yml)')"
-            echo "il=$(match '^(training/il/|shared/ci/|\.github/workflows/smoke-cpu\.yml)')"
+            echo "il=$(match '^(training/il/|shared/ci/|scripts/lib/common\.sh|\.github/workflows/smoke-cpu\.yml)')"
+            echo "vla=$(match '^(training/vla/|shared/ci/|scripts/lib/common\.sh|\.github/workflows/smoke-cpu\.yml)')"
+            echo "evaluation=$(match '^(evaluation/|training/il/lerobot/|shared/ci/|scripts/lib/common\.sh|\.github/workflows/smoke-cpu\.yml)')"
+            echo "osmo_replay=$(match '^(workflows/osmo/|training/utils/aml_mirror\.py|training/utils/replay-azureml\.sh|shared/ci/|scripts/lib/common\.sh|\.github/workflows/smoke-cpu\.yml)')"
             echo "dm_tools=$(match '^data-management/tools/')"
             echo "data_pipeline=$(match '^data-pipeline/capture/')"
             echo "inference=$(match '^fleet-deployment/inference/')"
+            echo "gpu_offload=$(match '^gpu-offload/(controller|runtime)/')"
+            # Broader than gpu_offload (which only gates the controller/runtime
+            # unit tests): also covers the Helm chart, host scripts, local
+            # registry, and examples (including committed remote.yaml
+            # manifests and Containerfiles), since a change confined to any of
+            # those previously merged with zero GPU-offload validation.
+            echo "gpu_offload_e2e=$(match '^gpu-offload/(controller|runtime|helm|scripts|registry|examples)/|^gpu-offload/mise\.toml$|^gpu-offload/\.env\.example$|^\.github/workflows/gpu-offload-kind-smoke\.yml$')"
             echo "shared_ci=$(match '^shared/ci/')"
             echo "dv_backend=$(match '^(data-management/viewer/backend/|data-management/viewer/docker-compose\.yml|shared/ci/smoke-docker\.sh|\.github/workflows/smoke-cpu\.yml)')"
-            echo "dv_frontend=$(match '^data-management/viewer/frontend/')"
+            echo "dv_frontend=$(match '^(data-management/viewer/frontend/|package(-lock)?\.json$)')"
             echo "fuzz=$(match '^(tests/fuzz|tests/fuzz_harness\.py|tests/generate_fuzz_corpus\.py|data-management/viewer/backend/src/|training/)')"
             echo "docusaurus=$(match '^docs/docusaurus/')"
             echo "pester=$pester_match"
@@ -82,6 +97,9 @@ jobs:
     with:
       rl: ${{ needs.changes.outputs.rl == 'true' }}
       il: ${{ needs.changes.outputs.il == 'true' }}
+      vla: ${{ needs.changes.outputs.vla == 'true' }}
+      evaluation: ${{ needs.changes.outputs.evaluation == 'true' }}
+      osmo_replay: ${{ needs.changes.outputs.osmo_replay == 'true' }}
       dataviewer: ${{ needs.changes.outputs.dv_backend == 'true' || needs.changes.outputs.dv_frontend == 'true' }}
     permissions:
       contents: read
@@ -104,6 +122,13 @@ jobs:
   markdown-lint:
     name: Markdown Lint
     uses: ./.github/workflows/markdown-lint.yml
+    permissions:
+      contents: read
+
+  # TOML formatting using Taplo
+  toml-format:
+    name: TOML Format
+    uses: ./.github/workflows/toml-format.yml
     permissions:
       contents: read
 
@@ -202,7 +227,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run OSV-Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2  # v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc  # v2.6.0
         continue-on-error: true
         with:
           # --no-resolve disables transitive resolution; pinned requirements files
@@ -315,6 +340,26 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+  # Pytest: gpu-offload controller and runtime components
+  pytest-gpu-offload:
+    name: Pytest GPU Offload
+    needs: changes
+    if: needs.changes.outputs.gpu_offload == 'true'
+    uses: ./.github/workflows/pytest-gpu-offload.yml
+    permissions:
+      contents: read
+
+  # End-to-end CPU-only smoke of the gpu-offload stack (kind admission +
+  # remote-call) for changes under the Helm chart, host scripts, local
+  # registry, or examples that pytest-gpu-offload does not exercise.
+  gpu-offload-kind-smoke:
+    name: GPU Offload Kind Smoke
+    needs: changes
+    if: needs.changes.outputs.gpu_offload_e2e == 'true'
+    uses: ./.github/workflows/gpu-offload-kind-smoke.yml
+    permissions:
+      contents: read
 
   # Pytest: shared CI scripts component
   pytest-shared-ci:
@@ -482,6 +527,7 @@ jobs:
       - workflow-refs-check
       - spell-check
       - markdown-lint
+      - toml-format
       - table-format
       - frontmatter-validation
       - msdate-freshness
@@ -498,6 +544,7 @@ jobs:
       - pytest-dm-tools
       - pytest-data-pipeline
       - pytest-inference
+      - pytest-gpu-offload
       - pytest-shared-ci
       - dataviewer-backend-pytests
       - evaluation-pytests
@@ -514,6 +561,7 @@ jobs:
       - codeql-analysis
       - smoke
       - container-scan
+      - gpu-offload-kind-smoke
     permissions:
       contents: read
     steps:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import time
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tests.e2e._aml import AzureMLJob, AzureMLWorkspace
@@ -32,6 +34,13 @@ _LEROBOT_REQUIRED_PARAMS = (
     "num_gpus",
     "distributed",
 )
+_PROXY_REQUIRED_METRICS = (
+    "osmo.task_count",
+    "osmo.task_completed",
+    "osmo.failed_tasks",
+    "osmo.task_success_rate",
+    "osmo.duration_seconds",
+)
 
 
 @dataclass(frozen=True)
@@ -60,15 +69,17 @@ def _tracking_uri(subscription_id: str, resource_group: str, workspace_name: str
 
 
 def _mlflow_client(aml_workspace: AzureMLWorkspace) -> MlflowClient:
+    import mlflow
     from mlflow.tracking import MlflowClient
 
-    return MlflowClient(
-        tracking_uri=_tracking_uri(
-            aml_workspace.subscription_id,
-            aml_workspace.resource_group,
-            aml_workspace.workspace_name,
-        )
+    tracking_uri = _tracking_uri(
+        aml_workspace.subscription_id,
+        aml_workspace.resource_group,
+        aml_workspace.workspace_name,
     )
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(tracking_uri)
+    return MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
 
 
 _MLFLOW_SEARCH_TIMEOUT_SECONDS = 300
@@ -217,13 +228,13 @@ def assert_osmo_workflow_has_mlflow_tracking(workflow: OSMOWorkflow, aml_workspa
         run_id=run_id,
         experiment_name=workflow.experiment_name,
     )
-
     if tracking.tags.get("correlation_id") != workflow.correlation_id:
         raise AssertionError(
             f"MLflow run {run_id!r} had correlation_id={tracking.tags.get('correlation_id')!r}, "
             f"expected {workflow.correlation_id!r}"
         )
 
+    workflow.handle.resource_identifiers["mlflow_run"] = run_id
     rendered_tags = ", ".join(
         f"{name}={value}" for name, value in sorted(tracking.tags.items()) if name == "correlation_id"
     )
@@ -232,6 +243,138 @@ def assert_osmo_workflow_has_mlflow_tracking(workflow: OSMOWorkflow, aml_workspa
     log_e2e(
         f"OSMO MLflow tracking passed: run_id={run_id} metrics=[{rendered_metrics}] "
         f"params=[{rendered_params}] tags=[{rendered_tags}]"
+    )
+
+
+def assert_aml_osmo_proxy_has_mlflow_tracking(
+    job: AzureMLJob,
+    aml_workspace: AzureMLWorkspace,
+) -> tuple[str, str]:
+    run_id = _resolve_latest_mlflow_run_id_by_experiment(aml_workspace, job.experiment_name)
+    tracking = _assert_run_has_expected_tracking(
+        aml_workspace,
+        run_id=run_id,
+        experiment_name=job.experiment_name,
+        required_metrics=_PROXY_REQUIRED_METRICS,
+        required_params=(),
+    )
+    workflow_id = tracking.tags.get("osmo.workflow_id")
+    if not workflow_id:
+        raise AssertionError(f"MLflow run {run_id!r} did not include osmo.workflow_id")
+    if tracking.tags.get("osmo.status") != "COMPLETED":
+        raise AssertionError(
+            f"MLflow run {run_id!r} had osmo.status={tracking.tags.get('osmo.status')!r}, expected 'COMPLETED'"
+        )
+    expected_metrics = {
+        "osmo.task_count": 1.0,
+        "osmo.task_completed": 1.0,
+        "osmo.failed_tasks": 0.0,
+        "osmo.task_success_rate": 1.0,
+    }
+    for name, expected in expected_metrics.items():
+        if tracking.metrics[name] != expected:
+            raise AssertionError(f"MLflow run {run_id!r} had {name}={tracking.metrics[name]!r}, expected {expected!r}")
+    if tracking.metrics["osmo.duration_seconds"] < 0:
+        raise AssertionError(
+            f"MLflow run {run_id!r} had negative duration {tracking.metrics['osmo.duration_seconds']!r}"
+        )
+    job.handle.resource_identifiers["osmo_workflow"] = workflow_id
+    job.handle.resource_identifiers["mlflow_run"] = run_id
+    log_e2e(f"AML-to-OSMO proxy MLflow tracking passed: job={job.name}, workflow_id={workflow_id}, run_id={run_id}")
+    return workflow_id, run_id
+
+
+def assert_osmo_vla_has_mlflow_tracking(
+    workflow: OSMOWorkflow,
+    aml_workspace: AzureMLWorkspace,
+) -> str:
+    client = _mlflow_client(aml_workspace)
+    correlation_id = workflow.correlation_id or workflow.workflow_id
+    escaped_correlation_id = correlation_id.replace("'", "\\'")
+    runs = _search_experiment_runs_with_retry(
+        client,
+        workflow.experiment_name,
+        filter_string=f"tags.osmo.run_id = '{escaped_correlation_id}'",
+        max_results=2,
+        criteria=f"osmo.run_id {correlation_id!r}",
+    )
+    if len(runs) > 1:
+        raise AssertionError(
+            f"Multiple MLflow runs were found in experiment {workflow.experiment_name!r} "
+            f"for osmo.run_id {correlation_id!r}"
+        )
+    run = runs[0]
+    if run.data.tags.get("framework") != "groot" or run.data.tags.get("source") != "osmo-train":
+        raise AssertionError(f"MLflow run {run.info.run_id!r} had unexpected framework/source tags: {run.data.tags}")
+    required_params = ("BASE_MODEL", "BASE_MODEL_REVISION", "ISAAC_GROOT_REF")
+    missing_params = [name for name in required_params if not run.data.params.get(name)]
+    if missing_params:
+        raise AssertionError(f"MLflow run {run.info.run_id!r} was missing VLA provenance params {missing_params}")
+    required_metrics = ("training.checkpoint_count", "training.final_checkpoint_step", "training.model_size_gib")
+    missing_metrics = [name for name in required_metrics if name not in run.data.metrics]
+    if missing_metrics:
+        raise AssertionError(f"MLflow run {run.info.run_id!r} was missing VLA metrics {missing_metrics}")
+    workflow.handle.resource_identifiers["mlflow_run"] = run.info.run_id
+    log_e2e(f"OSMO VLA MLflow tracking passed: workflow={workflow.workflow_id}, run_id={run.info.run_id}")
+    return run.info.run_id
+
+
+def delete_mlflow_run(aml_workspace: AzureMLWorkspace, run_id: str) -> None:
+    log_e2e(f"Deleting MLflow run {run_id}")
+    _mlflow_client(aml_workspace).delete_run(run_id)
+
+
+def delete_mlflow_experiment(aml_workspace: AzureMLWorkspace, experiment_name: str) -> None:
+    client = _mlflow_client(aml_workspace)
+    experiment = client.get_experiment_by_name(experiment_name)
+    if experiment is None:
+        return
+    log_e2e(f"Deleting MLflow experiment {experiment_name}")
+    client.delete_experiment(experiment.experiment_id)
+
+
+def assert_osmo_replay_has_mlflow_run(
+    *,
+    source_run_id: str,
+    model_name: str,
+    aml_workspace: AzureMLWorkspace,
+) -> None:
+    """Assert that replay created a tagged MLflow run with uploaded model artifacts."""
+    import mlflow
+
+    client = _mlflow_client(aml_workspace)
+    escaped_source_run_id = source_run_id.replace("'", "\\'")
+    runs = _search_experiment_runs_with_retry(
+        client,
+        model_name,
+        filter_string=f"tags.osmo.replay_source = '{escaped_source_run_id}'",
+        max_results=2,
+        criteria=f"replay source {source_run_id!r}",
+    )
+    if len(runs) > 1:
+        raise AssertionError(
+            f"Multiple MLflow runs were found in experiment {model_name!r} for replay source {source_run_id!r}"
+        )
+
+    run = runs[0]
+    if run.data.tags.get("osmo.replay") != "true":
+        raise AssertionError(f"MLflow replay run {run.info.run_id!r} did not include osmo.replay=true")
+
+    with tempfile.TemporaryDirectory(prefix="e2e-replay-artifacts-") as download_root:
+        run = client.get_run(run.info.run_id)
+        downloaded_path = Path(
+            mlflow.artifacts.download_artifacts(
+                artifact_uri=f"{run.info.artifact_uri.rstrip('/')}/model",
+                dst_path=download_root,
+            )
+        )
+        artifact_files = [path for path in downloaded_path.rglob("*") if path.is_file()]
+        if not artifact_files:
+            raise AssertionError(f"MLflow replay run {run.info.run_id!r} contained no model artifacts")
+
+    log_e2e(
+        f"OSMO replay MLflow artifacts passed: run_id={run.info.run_id}, "
+        f"source_run_id={source_run_id}, artifacts={len(artifact_files)}"
     )
 
 

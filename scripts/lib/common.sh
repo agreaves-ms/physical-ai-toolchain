@@ -18,9 +18,13 @@ unset _common_sh_dir _env_local
 # OCI images are pinned by immutable @sha256 digest for reproducible, tamper-evident
 # pulls; the tag is retained for readability. Refresh digests with
 # scripts/update-image-digests.sh.
+#
+# derive_azureml_environment_version_from_image() below derives AzureML environment
+# versions from the checked-in Isaac Lab and LeRobot defaults. update-image-digests.sh
+# keeps the direct-submit workflow pins synchronized with those defaults.
 DEFAULT_ISAAC_LAB_IMAGE="${DEFAULT_ISAAC_LAB_IMAGE:-nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1@sha256:ae9c938a16df856effad6dab92115ee0dce2a8813f56847eeeccbebc008d02c4}"
-DEFAULT_LEROBOT_TRAIN_IMAGE="${DEFAULT_LEROBOT_TRAIN_IMAGE:-pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime@sha256:eee11b3b3872a8c838e35ef48f08b2d5def2080902c7f666831310ca1a0ef2be}"
-DEFAULT_LEROBOT_EVAL_IMAGE="${DEFAULT_LEROBOT_EVAL_IMAGE:-pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime@sha256:0a3b9fedefe1f61ac4d5a9de9015c0863db27ca0fde2d4e37e6268147980b726}"
+DEFAULT_LEROBOT_TRAIN_IMAGE="${DEFAULT_LEROBOT_TRAIN_IMAGE:-pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407}"
+DEFAULT_LEROBOT_EVAL_IMAGE="${DEFAULT_LEROBOT_EVAL_IMAGE:-pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime@sha256:db80a41f8428644cebcb3d75b0b62df334ab6c0e75785951eb25f48bfbd42407}"
 DEFAULT_GROOT_IMAGE="${DEFAULT_GROOT_IMAGE:-pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel@sha256:0cf3402e946b7c384ba943ee05c90b4c5a4a05227923921f2b0918c011cfaf56}"
 # isaac-lab tag, available to callers that need the tag without the digest.
 _isaac_ref="${DEFAULT_ISAAC_LAB_IMAGE%@*}"
@@ -93,6 +97,24 @@ EOF
   [[ -n "$existing_image" ]] || fatal "Environment ${name}:${version} registration failed, and no existing environment image could be verified"
   [[ "$existing_image" == "$image" ]] || fatal "Environment ${name}:${version} already uses image '$existing_image', expected '$image'"
   info "Environment ${name}:${version} already exists with matching image; continuing"
+}
+
+resolve_azureml_compute_identity_client_id() {
+  local compute_target="${1:-}" resource_group="${2:?resource group required}"
+  local workspace_name="${3:?workspace name required}" client_id="${AZURE_CLIENT_ID:-}"
+
+  if [[ -z "$client_id" && -n "$compute_target" ]]; then
+    # Toolchain compute targets have exactly one user-assigned managed identity.
+    client_id=$(az ml compute show \
+      --name "${compute_target#azureml:}" \
+      --resource-group "$resource_group" \
+      --workspace-name "$workspace_name" \
+      --query "identity.user_assigned_identities[0].client_id" \
+      --output tsv)
+    [[ "$client_id" == "None" ]] && client_id=""
+  fi
+
+  printf '%s' "$client_id"
 }
 
 # Check for required tools
