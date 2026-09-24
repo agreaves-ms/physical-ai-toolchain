@@ -21,11 +21,19 @@ FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+if [[ -n "${NO_COLOR+x}" ]]; then
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    NC=''
+else
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+fi
 
 # PIDs for cleanup
 BACKEND_PID=""
@@ -58,6 +66,7 @@ Options:
     --frontend            Start frontend only
     --data-dir <path>     Local datasets directory (overrides DATA_DIR env var)
     --check               Check installed launch prerequisites without starting services
+    --config-preview      Print configuration and exit without changes
     --help, -h            Show this help message
 
 Environment Variables:
@@ -295,6 +304,7 @@ main() {
     local backend_only=false
     local frontend_only=false
     local check_only=false
+    local config_preview=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -324,6 +334,10 @@ main() {
                 export DATA_DIR
                 shift
                 ;;
+            --config-preview)
+                config_preview=true
+                shift
+                ;;
             --help|-h)
                 show_help
                 exit 0
@@ -335,6 +349,16 @@ main() {
                 ;;
         esac
     done
+
+    if [[ "${config_preview}" == "true" ]]; then
+        log_info "Configuration Preview"
+        printf 'Backend Port: %s\n' "${BACKEND_PORT}"
+        printf 'Frontend Port: %s\n' "${FRONTEND_PORT}"
+        printf 'Data Directory: %s\n' "${DATA_DIR:-${REPO_ROOT}/datasets}"
+        printf 'Mode: %s\n' "$([[ "${backend_only}" == "true" ]] && echo backend || ([[ "${frontend_only}" == "true" ]] && echo frontend || echo both))"
+        printf 'Mutation: None\n'
+        return 0
+    fi
 
     check_prerequisites
 
