@@ -351,11 +351,17 @@ main() {
     done
 
     if [[ "${config_preview}" == "true" ]]; then
+        local mode="both"
+        if [[ "${backend_only}" == "true" ]]; then
+            mode="backend"
+        elif [[ "${frontend_only}" == "true" ]]; then
+            mode="frontend"
+        fi
         log_info "Configuration Preview"
         printf 'Backend Port: %s\n' "${BACKEND_PORT}"
         printf 'Frontend Port: %s\n' "${FRONTEND_PORT}"
         printf 'Data Directory: %s\n' "${DATA_DIR:-${REPO_ROOT}/datasets}"
-        printf 'Mode: %s\n' "$([[ "${backend_only}" == "true" ]] && echo backend || ([[ "${frontend_only}" == "true" ]] && echo frontend || echo both))"
+        printf 'Mode: %s\n' "${mode}"
         printf 'Mutation: None\n'
         return 0
     fi

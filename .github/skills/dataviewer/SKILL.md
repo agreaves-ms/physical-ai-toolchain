@@ -154,6 +154,9 @@ inspection. Require the returned dataset ID, output adapter/version, viewer adap
 profile ID/hash, capture-provenance hash, export-validation hash, capture features, and
 sensor roles to match the descriptor.
 
+Read the [accepted-dataset contract reference](../../../data-management/viewer/README.md#-accepted-dataset-contract)
+for the descriptor schema, artifact integrity checks, and invalid-contract behavior.
+
 ## Architecture
 
 ```text
@@ -435,17 +438,10 @@ File structure:
 }
 ```
 
-To clear all labels for a fresh start, overwrite the file with an empty `episodes` object:
-
-```json
-{
-  "dataset_id": "{dataset_id}",
-  "available_labels": ["SUCCESS", "FAILURE", "PARTIAL", "LEFT", "RIGHT"],
-  "episodes": {}
-}
-```
-
-After editing the file on disk, restart the backend or reload the page for changes to take effect.
+When clearing labels is explicitly requested, send an empty `labels` array through
+the episode-label PUT endpoint for each selected episode. Use the latest revision
+precondition for every write and verify the result with GET. Do not overwrite label
+files behind a running server.
 
 ### Step 5 — Verify in UI with Playwright
 
@@ -500,7 +496,8 @@ The VLM judge scores each episode with an outcome MCQ (success/fail with N-sampl
 
 ### Enable the judge
 
-Edit `data-management/viewer/backend/.env` before launch:
+Pass the judge settings through the launcher's child environment. Store them in
+`backend/.env` only when persistent defaults are explicitly requested:
 
 ```env
 DATA_DIR=/abs/path/to/datasets
@@ -514,7 +511,7 @@ VLM_JUDGE_CACHE_DIR=outputs/vlm-judge/cache
 ```
 
 > [!IMPORTANT]
-> Restart the backend after editing `.env`. Uvicorn `--reload` re-reads code, not env vars. The frontend reads `vlm_judge_enabled` from `GET /api/datasets/{id}/capabilities` before requesting an episode judgment.
+> Restart an owned backend after changing launch settings. Uvicorn `--reload` re-reads code, not env vars. The frontend reads `vlm_judge_enabled` from `GET /api/datasets/{id}/capabilities` before requesting an episode judgment.
 
 ### Backends at a glance
 

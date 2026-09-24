@@ -5,16 +5,17 @@ Provides endpoints for listing datasets, retrieving metadata,
 and accessing episode information with HDF5 and LeRobot parquet support.
 """
 
+from __future__ import annotations
+
 import asyncio
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from ..config import AppConfig, get_app_config
-from ..models.datasources import DatasetInfo, EpisodeData, EpisodeMeta, TrajectoryPoint
+from ..models.datasources import AcceptedDatasetContract, DatasetInfo, EpisodeData, EpisodeMeta, TrajectoryPoint
 from ..services.dataset_service import DatasetService, get_dataset_service
 from ..services.video_transcode import ensure_browser_compatible
 from ..validation import (
@@ -29,21 +30,6 @@ from ..validation import (
 )
 
 router = APIRouter()
-
-
-class AcceptedDatasetContract(BaseModel):
-    """Verified output-adapter and capture provenance for one dataset."""
-
-    dataset_id: str
-    output_adapter_id: str
-    output_adapter_version: str
-    viewer_adapter_id: str
-    profile_id: str
-    profile_sha256: str
-    capture_provenance_sha256: str
-    export_validation_sha256: str
-    capture_features: list[dict[str, Any]]
-    sensors: list[dict[str, Any]]
 
 
 class DatasetCapabilities(BaseModel):
@@ -65,7 +51,7 @@ class DatasetCapabilities(BaseModel):
     """Number of episodes detected."""
 
     dataset_contract: AcceptedDatasetContract | None = None
-    """Verified accepted-dataset contract when the output adapter emitted one."""
+    """Validated descriptor metadata with matching artifact digests, when present."""
 
     vlm_judge_enabled: bool
     """Whether the optional VLM judge API is mounted."""

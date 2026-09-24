@@ -203,7 +203,9 @@ export const JudgePanel = memo(function JudgePanel({
         </header>
         <p className="text-muted-foreground mt-2 text-xs">
           VLM-as-judge is not enabled for this server. Set
-          <code className="bg-muted mx-1 rounded px-1 py-0.5">VLM_JUDGE_ENABLED=true</code>
+          <code className="bg-muted text-foreground mx-1 rounded px-1 py-0.5">
+            VLM_JUDGE_ENABLED=true
+          </code>
           on the backend to activate it.
         </p>
       </section>

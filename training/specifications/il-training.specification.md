@@ -19,11 +19,11 @@ Active — secondary training approach for manipulation tasks.
 
 LeRobot is runtime-installed via `uv pip` inside its pinned PyTorch container.
 
-| Setting        | Value                                                                                     |
-|----------------|-------------------------------------------------------------------------------------------|
-| Container      | `DEFAULT_LEROBOT_TRAIN_IMAGE` from `scripts/lib/common.sh`                                   |
-| Framework      | LeRobot (installed at runtime via `uv pip`)                                               |
-| Dataset format | Hugging Face LeRobot-compatible                                                           |
+| Setting        | Value                                                      |
+|----------------|------------------------------------------------------------|
+| Container      | `DEFAULT_LEROBOT_TRAIN_IMAGE` from `scripts/lib/common.sh` |
+| Framework      | LeRobot (installed at runtime via `uv pip`)                |
+| Dataset format | Hugging Face LeRobot-compatible                            |
 
 ## Submission Paths
 

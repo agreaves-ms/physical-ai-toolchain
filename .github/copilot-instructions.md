@@ -16,6 +16,12 @@ Follow the affected area's existing conventions and scoped instructions. Use man
 * Do not modify vendored files in `external/`.
 * Follow [derived-file conventions](../scripts/README.md) when updating hve-core-derived scripts.
 
+## Environment Details
+
+* Keep discovered Azure resource, subscription, and tenant identifiers, service endpoints, hostnames, and local paths out of tracked source, tests, documentation, and defaults.
+* Follow the [environment-deployment skill](skills/environment-deployment/SKILL.md) to generate non-secret bundles under gitignored `infrastructure/setup/generated/<environment>/`. Keep credentials, tokens, kubeconfigs, OSMO profiles, and Terraform state outside bundles and Git.
+* Preserve clearly documented placeholders and instructional network/resource examples; do not treat them as discovered deployment values.
+
 ## Python
 
 * Use `uv`, not pip. Preserve the affected project's Python constraints.
@@ -39,8 +45,7 @@ Write natural, direct, reader-focused prose. Avoid corporate filler, inflated cl
 ## Agent Workflows
 
 * The primary agent writes and updates RPI plans; do not use `RPI Planner` subagents.
-* Delegate RPI reviews and critiques to `GPT-6 Luna (copilot)`, unless the user explicitly chooses another model for `rpi-review` or `rpi-plan-critique`. The caller may provide context and accept, disregard, or verify findings; it owns the final output.
-* HVE Builder does not require subagent reviews. Do not use `HVE Artifact Tester`; the primary agent performs surface-level `hve-builder-tester` checks and states what remains unverified. Separate RPI reviews still follow the rule above.
+* Follow the active RPI and HVE skill contracts for review, delegation, and validation. Respect the user's model selection rather than requiring a repository-specific model or local plugin.
 * Cloud agents use the [pinned RPI skill bootstrap](../docs/reference/copilot-artifacts.md), not the retired umbrella agents. Before cloud RPI work, verify required skill files, their `metadata.github-pinned` values against `RPI_SKILLS_REF`, and the generated tracking instruction. Stop on an incomplete bootstrap.
 * In cloud-agent PR work, persist completed RPI phases as PR comments and maintain an artifact index with the resolved upstream SHA in the PR description. If PR writes are unavailable, return the complete phase artifacts without claiming persistence.
 * Apply scoped dataviewer and OpenVEX instructions when those areas are affected, and call out AzureRM provider major-version changes explicitly.

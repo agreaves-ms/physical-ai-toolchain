@@ -31,7 +31,7 @@ def launcher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     (vite / "package.json").write_text('{"name":"vite","version":"0.0.0"}\n', encoding="utf-8")
     (vite / "bin" / "vite.js").write_text("process.exit(23)\n", encoding="utf-8")
     (backend_bin / "activate").write_text(
-        f"export PATH={shlex.quote(str(backend_bin))}:\"$PATH\"\n",
+        f'export PATH={shlex.quote(str(backend_bin))}:"$PATH"\n',
         encoding="utf-8",
     )
     uvicorn = backend_bin / "uvicorn"
@@ -62,6 +62,32 @@ def test_check_resolves_hoisted_vite_without_starting_services(launcher: Path) -
     assert result.returncode == 0, result.stdout + result.stderr
     assert "no services started" in result.stdout
     assert "Backend child invoked" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("mode_args", "expected_mode"),
+    [([], "both"), (["--backend"], "backend"), (["--frontend"], "frontend")],
+)
+def test_config_preview_preserves_mode_without_starting_services(
+    launcher: Path, monkeypatch: pytest.MonkeyPatch, mode_args: list[str], expected_mode: str
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    data_dir = launcher.parent / "uncreated dataset parent"
+    result = subprocess.run(
+        ["bash", str(launcher), "--config-preview", "--data-dir", str(data_dir), *mode_args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Mode: {expected_mode}" in result.stdout
+    assert f"Data Directory: {data_dir}" in result.stdout
+    assert "Mutation: None" in result.stdout
+    assert "\x1b[" not in result.stdout
+    assert "Backend child invoked" not in result.stdout
+    assert not data_dir.exists()
 
 
 def test_backend_failure_is_reported_with_optional_env_keys_absent(launcher: Path) -> None:

@@ -5,6 +5,8 @@ Delegates format-specific operations to registered DatasetFormatHandler
 implementations (LeRobot, HDF5) and manages blob storage integration.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -17,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...models.datasources import (
+    AcceptedDatasetContract,
     DatasetInfo,
     EpisodeData,
     EpisodeMeta,
@@ -63,7 +66,7 @@ class DatasetService:
         self,
         base_path: str | None = None,
         storage_adapter: StorageAdapter | None = None,
-        blob_provider: "BlobDatasetProvider | None" = None,
+        blob_provider: BlobDatasetProvider | None = None,
         episode_cache_capacity: int = 32,
         episode_cache_max_mb: int = 100,
     ):
@@ -320,7 +323,7 @@ class DatasetService:
         blob_path: str,
         offset: int | None = None,
         length: int | None = None,
-    ) -> tuple[dict[str, str], str, "AsyncIterator"] | None:
+    ) -> tuple[dict[str, str], str, AsyncIterator] | None:
         """Stream video from blob storage with optional byte-range support.
 
         Returns (headers, media_type, async_iterator) or None.
@@ -758,8 +761,8 @@ class DatasetService:
         """Check if a dataset is in LeRobot parquet format."""
         return self._lerobot_handler.has_loader(dataset_id)
 
-    def get_dataset_contract(self, dataset_id: str) -> dict[str, object] | None:
-        """Return a verified accepted-dataset descriptor when one is present."""
+    def get_dataset_contract(self, dataset_id: str) -> AcceptedDatasetContract | None:
+        """Return validated descriptor metadata with matching artifact digests."""
         try:
             dataset_path = self._get_dataset_path(dataset_id)
             descriptor_path = dataset_path / "accepted-dataset.json"
@@ -790,23 +793,21 @@ class DatasetService:
                 if identity.get("sha256") != actual_hash:
                     raise ValueError(f"accepted-dataset artifact hash differs: {filename}")
                 hashes[name] = actual_hash
-            capture_features = descriptor.get("capture_features")
-            sensors = descriptor.get("sensors")
-            if not isinstance(capture_features, list) or not isinstance(sensors, list):
-                raise ValueError("accepted-dataset features or sensors are invalid")
-            return {
-                "dataset_id": dataset_id,
-                "output_adapter_id": descriptor.get("output_adapter_id"),
-                "output_adapter_version": descriptor.get("output_adapter_version"),
-                "viewer_adapter_id": descriptor.get("viewer_adapter_id"),
-                "profile_id": descriptor.get("profile_id"),
-                "profile_sha256": descriptor.get("profile_sha256"),
-                "capture_provenance_sha256": hashes["capture_provenance"],
-                "export_validation_sha256": hashes["export_validation"],
-                "capture_features": capture_features,
-                "sensors": sensors,
-            }
-        except (OSError, ValueError, json.JSONDecodeError) as error:
+            return AcceptedDatasetContract.model_validate(
+                {
+                    "dataset_id": dataset_id,
+                    "output_adapter_id": descriptor.get("output_adapter_id"),
+                    "output_adapter_version": descriptor.get("output_adapter_version"),
+                    "viewer_adapter_id": descriptor.get("viewer_adapter_id"),
+                    "profile_id": descriptor.get("profile_id"),
+                    "profile_sha256": descriptor.get("profile_sha256"),
+                    "capture_provenance_sha256": hashes["capture_provenance"],
+                    "export_validation_sha256": hashes["export_validation"],
+                    "capture_features": descriptor.get("capture_features"),
+                    "sensors": descriptor.get("sensors"),
+                }
+            )
+        except (OSError, ValueError) as error:
             logger.warning(
                 "Ignoring invalid accepted-dataset contract for '%s': %s",
                 dataset_id.replace("\r", "").replace("\n", ""),
