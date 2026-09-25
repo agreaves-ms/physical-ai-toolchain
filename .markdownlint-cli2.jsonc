@@ -88,6 +88,7 @@
     "MD055": { "style": "leading_and_trailing" },
     "MD056": true,
     "MD058": true,
-    "MD060": { "style": "any" }
+    // markdown-table-formatter owns table layout; MD060 measures emoji widths differently.
+    "MD060": false
   }
 }
