@@ -268,7 +268,7 @@ describe('ExportDialog', () => {
       expect(screen.getByText('Export Complete')).toBeInTheDocument()
     })
     expect(
-      screen.getByText(/Successfully exported 1 episode\(s\) to 1 file\(s\)\./i),
+      screen.getByText(/Successfully exported 1 episode\(s\) to \/exports\/dataset\.hdf5/i),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^done$/i })).toBeInTheDocument()
   })

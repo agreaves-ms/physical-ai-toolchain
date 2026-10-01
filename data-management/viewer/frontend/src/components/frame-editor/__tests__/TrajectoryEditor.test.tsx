@@ -145,11 +145,11 @@ describe('TrajectoryEditor', () => {
     expect(deltaSlider('Left Gripper')).toBeInTheDocument()
   })
 
-  it('says that exports keep the recorded qpos and add adjustments as qpos_adjusted', () => {
+  it('says that exports keep the recorded positions and name the adjusted data for each format', () => {
     setup()
     render(<TrajectoryEditor />)
     expect(screen.getByRole('note')).toHaveTextContent(
-      'Exports keep the recorded joint positions as qpos and add these adjustments as qpos_adjusted, with a mask of the edited rows.',
+      'Exports keep the recorded joint positions and add these adjustments beside them, as qpos_adjusted in HDF5 or adjusted.observation.state in LeRobot, with a mask of the edited rows.',
     )
   })
 

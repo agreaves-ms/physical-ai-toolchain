@@ -2,8 +2,9 @@
  * Trajectory editor for adjusting the state vector at each frame.
  *
  * Each state channel takes an additive delta or a set value. Adjustments are stored
- * non-destructively in the edit store and preview on the trajectory plot. HDF5 exports keep the
- * recorded qpos and add them as qpos_adjusted with a mask of the edited rows.
+ * non-destructively in the edit store and preview on the trajectory plot. Exports keep the recorded
+ * positions and add the adjustments beside them with a mask of the edited rows: qpos_adjusted in
+ * HDF5 exports and adjusted.observation.state in LeRobot exports.
  */
 
 import { Check, RotateCcw, Trash2 } from 'lucide-react'
@@ -312,8 +313,9 @@ function TrajectoryEditorFrame({ className, currentFrame }: TrajectoryEditorFram
       </div>
 
       <p role="note" className="text-muted-foreground text-xs">
-        Exports keep the recorded joint positions as qpos and add these adjustments as
-        qpos_adjusted, with a mask of the edited rows.
+        Exports keep the recorded joint positions and add these adjustments beside them, as
+        qpos_adjusted in HDF5 or adjusted.observation.state in LeRobot, with a mask of the edited
+        rows.
       </p>
 
       <div className="bg-muted/50 max-h-96 space-y-2 overflow-y-auto rounded-lg p-3">
