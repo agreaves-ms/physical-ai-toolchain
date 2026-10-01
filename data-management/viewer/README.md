@@ -591,6 +591,30 @@ The label panel shows import buttons only for analysis fields present in the dat
 
 Supported fields include object, pickup location, grasp outcome, place outcome, motion score, motion flags, and source. Free-text movement notes and instructions remain analysis data because importing them would create unbounded label sets.
 
+### Exporting edited episodes
+
+**Export** writes the current episode with its edits applied: removed and inserted frames, crop and resize, trajectory adjustments and subtasks. The source dataset is never modified, and the output path must be under the Dataviewer data directory.
+
+| Source format | Export output                                                                                            |
+|---------------|----------------------------------------------------------------------------------------------------------|
+| LeRobot v3.0  | A new LeRobot v3.0 dataset at the output path, which must be new or empty and outside the source dataset |
+| HDF5          | `episode_<index>.hdf5` files in the output directory, with `.meta.json` and `.subtasks.json` beside them |
+
+A LeRobot export:
+
+- keeps every recorded feature;
+- re-encodes the videos with the source's recorded encoder settings;
+- recomputes the per-episode and dataset statistics.
+
+Removing or inserting frames renumbers `frame_index` and sets `timestamp` to `frame_index / fps`. `dataviewer-export.json` maps each output frame to its source frame and records the edits and remapped subtasks.
+
+Trajectory adjustments never replace recorded joint positions:
+
+- LeRobot exports add `adjusted.observation.state` and `adjusted.observation.state_mask` beside `observation.state`. The `adjusted.` prefix keeps them out of LeRobot policy inputs.
+- HDF5 exports add `data/qpos_adjusted` and `data/qpos_adjusted_mask` beside `data/qpos`.
+
+Each export is its own dataset. LeRobot merges datasets only when their features match, so a cropped or adjusted export doesn't merge with an unedited one.
+
 ### VLM dataset-labeling CLI
 
 `backend/scripts/vlm_label_dataset.py` runs Qwen3-VL across a LeRobot v2.1 or v3.0 dataset. It writes full rows to `labels.jsonl` and a flat summary to `labels.csv`.
