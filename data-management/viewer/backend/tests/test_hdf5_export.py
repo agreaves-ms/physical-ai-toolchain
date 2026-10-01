@@ -375,6 +375,26 @@ class TestExportEpisode:
         subtasks = json.loads((hdf5_export_dir / "episode_000000.subtasks.json").read_text())
         assert [subtask["frame_range"] for subtask in subtasks] == [[0, 1], [3, 9]]
 
+    def test_export_clamps_subtasks_to_surviving_frames(self, exporter: HDF5Exporter, hdf5_export_dir: Path):
+        edits = EpisodeEditOperations(
+            dataset_id="test",
+            episode_index=0,
+            removed_frames={0, 1, 9},
+            subtasks=[
+                SubtaskSegment(id="st-1", label="Reach", frame_range=(0, 4), color="#ff0000", source="manual"),
+                SubtaskSegment(id="st-2", label="Grasp", frame_range=(5, 20), color="#00ff00", source="manual"),
+                SubtaskSegment(id="st-3", label="Gone", frame_range=(0, 1), color="#0000ff", source="auto"),
+            ],
+        )
+
+        assert exporter.export_episode(episode_index=0, edits=edits).success is True
+
+        subtasks = json.loads((hdf5_export_dir / "episode_000000.subtasks.json").read_text())
+        assert [(subtask["label"], subtask["frame_range"]) for subtask in subtasks] == [
+            ("Reach", [0, 2]),
+            ("Grasp", [3, 6]),
+        ]
+
     def test_export_nonexistent_episode(self, exporter: HDF5Exporter):
         result = exporter.export_episode(episode_index=999)
 

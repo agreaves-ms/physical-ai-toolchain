@@ -151,18 +151,18 @@ def output_indices(plan: list[PlannedFrame]) -> dict[int, int]:
 
 
 def remap_subtasks(subtasks: list[SubtaskSegment], index_map: dict[int, int]) -> list[dict[str, Any]]:
-    """Return subtasks with output frame ranges, dropping any whose start or end frame was removed."""
+    """Return subtasks with output ranges clamped to their surviving frames, dropping any with none left."""
     remapped = []
     for subtask in subtasks:
-        start = index_map.get(subtask.frame_range[0])
-        end = index_map.get(subtask.frame_range[1])
-        if start is None or end is None:
+        first, last = subtask.frame_range
+        kept = [output for source, output in index_map.items() if first <= source <= last]
+        if not kept:
             continue
         remapped.append(
             {
                 "id": subtask.id,
                 "label": subtask.label,
-                "frame_range": [start, end],
+                "frame_range": [min(kept), max(kept)],
                 "color": subtask.color,
                 "source": subtask.source,
                 "description": subtask.description,

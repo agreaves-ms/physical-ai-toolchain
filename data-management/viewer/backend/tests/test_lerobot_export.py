@@ -347,6 +347,7 @@ def test_subtasks_are_remapped_to_output_frames_in_provenance(source: Path) -> N
     assert [(subtask["id"], subtask["frame_range"]) for subtask in edits["subtasks"]] == [
         ("reach", [0, 4]),
         ("grasp", [5, 11]),
+        ("gone", [3, 3]),
     ]
 
 
