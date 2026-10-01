@@ -206,6 +206,65 @@ class TestExportEpisodes:
         assert kwargs["episode_indices"] == [0]
         assert 0 in kwargs["edits_map"]
 
+    def test_trajectory_adjustments_reach_the_exporter(
+        self,
+        client: TestClient,
+        override_service,
+        dataset_layout,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from src.api.services.hdf5_exporter import TrajectoryAdjustment
+
+        _, _dataset, output_dir = dataset_layout
+        exporter_instance = MagicMock()
+        exporter_instance.export_episodes.return_value = _make_export_result()
+        _patch_exporter(monkeypatch, MagicMock(return_value=exporter_instance))
+        adjustment = {"frameIndex": 2, "channelDeltas": {"0": 0.5}, "channelValues": {"6": 0.7}}
+        body = {
+            "episodeIndices": [0],
+            "outputPath": str(output_dir),
+            "applyEdits": True,
+            "edits": {"0": {"episodeIndex": 0, "trajectoryAdjustments": [adjustment]}},
+        }
+
+        resp = client.post("/api/datasets/ds-1/export", json=body)
+
+        assert resp.status_code == 200, resp.text
+        edits = exporter_instance.export_episodes.call_args.kwargs["edits_map"][0]
+        assert edits.trajectory_adjustments == [
+            TrajectoryAdjustment(frame_index=2, channel_deltas={0: 0.5}, channel_values={6: 0.7})
+        ]
+
+    @pytest.mark.parametrize(
+        "adjustment",
+        [
+            '{"frameIndex": -1, "channelDeltas": {"0": 0.5}}',
+            '{"frameIndex": 2, "channelDeltas": {"-1": 0.5}}',
+            '{"frameIndex": 2, "channelValues": {"0": NaN}}',
+            '{"frameIndex": 2, "channelDeltas": {"0": Infinity}}',
+        ],
+    )
+    def test_invalid_trajectory_adjustments_are_rejected_before_export(
+        self,
+        client: TestClient,
+        override_service,
+        dataset_layout,
+        monkeypatch: pytest.MonkeyPatch,
+        adjustment: str,
+    ) -> None:
+        _, _dataset, output_dir = dataset_layout
+        exporter_cls = MagicMock()
+        _patch_exporter(monkeypatch, exporter_cls)
+        body = (
+            f'{{"episodeIndices": [0], "outputPath": {json.dumps(str(output_dir))}, "applyEdits": true, '
+            f'"edits": {{"0": {{"episodeIndex": 0, "trajectoryAdjustments": [{adjustment}]}}}}}}'
+        )
+
+        resp = client.post("/api/datasets/ds-1/export", content=body, headers={"content-type": "application/json"})
+
+        assert resp.status_code == 422, resp.text
+        exporter_cls.assert_not_called()
+
     def test_import_error_returns_501(
         self,
         client: TestClient,

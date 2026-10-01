@@ -57,6 +57,18 @@ class SubtaskSegment:
 
 
 @dataclass
+class TrajectoryAdjustment:
+    """Per-frame change to joint positions, keyed by state channel index; a set value replaces that channel's delta."""
+
+    frame_index: int
+    """Original frame index the adjustment applies to."""
+    channel_deltas: dict[int, float] = field(default_factory=dict)
+    """Values added to channels."""
+    channel_values: dict[int, float] = field(default_factory=dict)
+    """Values that replace channels."""
+
+
+@dataclass
 class EpisodeEditOperations:
     """Complete set of edit operations for an episode."""
 
@@ -74,6 +86,8 @@ class EpisodeEditOperations:
     """Frame insertion specifications for interpolated frames."""
     subtasks: list[SubtaskSegment] | None = None
     """Sub-task segments for this episode."""
+    trajectory_adjustments: list[TrajectoryAdjustment] | None = None
+    """Joint-position adjustments, exported as a derived ``qpos_adjusted`` array beside the recorded ``qpos``."""
 
 
 @dataclass
@@ -247,6 +261,7 @@ class HDF5Exporter:
                     episode,
                     valid_indices,
                     edits.inserted_frames if edits else None,
+                    edits.trajectory_adjustments if edits else None,
                 )
 
                 # Apply transforms and export images
@@ -464,12 +479,35 @@ class HDF5Exporter:
 
         return result
 
+    @staticmethod
+    def _apply_adjustments(positions: NDArray, adjustments: list[TrajectoryAdjustment]) -> NDArray:
+        """Return a copy of positions with each adjustment applied at its original frame."""
+        adjusted = np.array(positions, dtype=np.float64, copy=True)
+        frames, channels = adjusted.shape
+        for adjustment in adjustments:
+            if not 0 <= adjustment.frame_index < frames:
+                raise HDF5ExportError(
+                    f"trajectory adjustment frame {adjustment.frame_index} is outside the episode's {frames} frames"
+                )
+            for channel in (*adjustment.channel_deltas, *adjustment.channel_values):
+                if not 0 <= channel < channels:
+                    raise HDF5ExportError(
+                        f"trajectory adjustment channel {channel} is outside the episode's {channels} joint channels"
+                    )
+            for channel, delta in adjustment.channel_deltas.items():
+                if channel not in adjustment.channel_values:
+                    adjusted[adjustment.frame_index, channel] += delta
+            for channel, value in adjustment.channel_values.items():
+                adjusted[adjustment.frame_index, channel] = value
+        return adjusted
+
     def _export_trajectory_data(
         self,
         dst: "h5py.File",
         episode: Any,
         valid_indices: list[int],
         inserted_frames: list[FrameInsertion] | None = None,
+        trajectory_adjustments: list[TrajectoryAdjustment] | None = None,
     ) -> None:
         """Export trajectory data with frame filtering and insertions."""
         data_group = dst.create_group("data")
@@ -482,13 +520,25 @@ class HDF5Exporter:
                 filtered = self._apply_insertions(filtered, insertions)
             return filtered
 
-        # Joint positions
+        # Joint positions as recorded
+        qpos = process_data(episode.joint_positions)
         data_group.create_dataset(
             "qpos",
-            data=process_data(episode.joint_positions),
+            data=qpos,
             compression=self.compression,
             compression_opts=self.compression_level if self.compression == "gzip" else None,
         )
+
+        # Adjusted joint positions go beside the recorded ones, never over them.
+        if trajectory_adjustments:
+            adjusted = process_data(self._apply_adjustments(episode.joint_positions, trajectory_adjustments))
+            data_group.create_dataset(
+                "qpos_adjusted",
+                data=adjusted,
+                compression=self.compression,
+                compression_opts=self.compression_level if self.compression == "gzip" else None,
+            )
+            data_group.create_dataset("qpos_adjusted_mask", data=np.any(adjusted != qpos, axis=1))
 
         # Joint velocities
         if episode.joint_velocities is not None:
@@ -689,6 +739,17 @@ class HDF5Exporter:
             if edits.subtasks:
                 edit_info["subtasks_count"] = len(edits.subtasks)
 
+            if edits.trajectory_adjustments:
+                edit_info["adjusted_dataset"] = "data/qpos_adjusted"
+                edit_info["trajectory_adjustments"] = [
+                    {
+                        "frame_index": adjustment.frame_index,
+                        "channel_deltas": adjustment.channel_deltas,
+                        "channel_values": adjustment.channel_values,
+                    }
+                    for adjustment in edits.trajectory_adjustments
+                ]
+
             meta["edits"] = edit_info
 
         path.write_text(json.dumps(meta, indent=2))
@@ -782,6 +843,21 @@ def parse_edit_operations(data: dict) -> EpisodeEditOperations:
             for st in data["subtasks"]
         ]
 
+    trajectory_adjustments = None
+    if data.get("trajectoryAdjustments"):
+        trajectory_adjustments = [
+            TrajectoryAdjustment(
+                frame_index=adjustment["frameIndex"],
+                channel_deltas={
+                    int(channel): float(value) for channel, value in (adjustment.get("channelDeltas") or {}).items()
+                },
+                channel_values={
+                    int(channel): float(value) for channel, value in (adjustment.get("channelValues") or {}).items()
+                },
+            )
+            for adjustment in data["trajectoryAdjustments"]
+        ]
+
     return EpisodeEditOperations(
         dataset_id=data.get("datasetId", ""),
         episode_index=data.get("episodeIndex", 0),
@@ -790,4 +866,5 @@ def parse_edit_operations(data: dict) -> EpisodeEditOperations:
         removed_frames=removed_frames,
         inserted_frames=inserted_frames,
         subtasks=subtasks,
+        trajectory_adjustments=trajectory_adjustments,
     )

@@ -145,10 +145,12 @@ describe('TrajectoryEditor', () => {
     expect(deltaSlider('Left Gripper')).toBeInTheDocument()
   })
 
-  it('says that adjustments only preview on the plot and are not exported', () => {
+  it('says that exports keep the recorded qpos and add adjustments as qpos_adjusted', () => {
     setup()
     render(<TrajectoryEditor />)
-    expect(screen.getByRole('note')).toHaveTextContent(/not applied to exported data/)
+    expect(screen.getByRole('note')).toHaveTextContent(
+      'Exports keep the recorded joint positions as qpos and add these adjustments as qpos_adjusted, with a mask of the edited rows.',
+    )
   })
 
   it('renders the frame indicator and the modified-frame count', () => {

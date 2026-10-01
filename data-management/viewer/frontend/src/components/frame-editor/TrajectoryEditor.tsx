@@ -311,7 +311,8 @@ function TrajectoryEditorFrame({ className, currentFrame }: TrajectoryEditorFram
       </div>
 
       <p role="note" className="text-muted-foreground text-xs">
-        Adjustments preview on the trajectory plot only. They are not applied to exported data.
+        Exports keep the recorded joint positions as qpos and add these adjustments as
+        qpos_adjusted, with a mask of the edited rows.
       </p>
 
       <div className="bg-muted/50 max-h-96 space-y-2 overflow-y-auto rounded-lg p-3">

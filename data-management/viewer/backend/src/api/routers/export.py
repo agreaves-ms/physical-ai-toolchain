@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt
 
 from ..csrf import require_csrf_token
 from ..services.dataset_service import DatasetService, get_dataset_service
@@ -82,6 +82,14 @@ class FrameInsertionRequest(SanitizedModel):
     )
 
 
+class TrajectoryAdjustmentRequest(SanitizedModel):
+    """Joint-position adjustment at one frame; a set value replaces that channel's delta."""
+
+    frameIndex: NonNegativeInt = Field(..., description="Original frame index")
+    channelDeltas: dict[NonNegativeInt, FiniteFloat] | None = Field(None, description="Values added to channels")
+    channelValues: dict[NonNegativeInt, FiniteFloat] | None = Field(None, description="Values that replace channels")
+
+
 class EpisodeEditRequest(SanitizedModel):
     """Edit operations for a single episode."""
 
@@ -93,6 +101,29 @@ class EpisodeEditRequest(SanitizedModel):
     removedFrames: list[int] | None = Field(None, description="Frame indices to exclude")
     insertedFrames: list[FrameInsertionRequest] | None = Field(None, description="Interpolated frame insertions")
     subtasks: list[SubtaskRequest] | None = Field(None, description="Sub-task segments")
+    trajectoryAdjustments: list[TrajectoryAdjustmentRequest] | None = Field(
+        None, description="Joint-position adjustments exported as qpos_adjusted beside the recorded qpos"
+    )
+
+
+def _edit_operations(dataset_id: str, edit_req: EpisodeEditRequest) -> EpisodeEditOperations:
+    """Convert one episode's validated edit request into exporter edit operations."""
+    return parse_edit_operations(
+        {
+            "datasetId": dataset_id,
+            "episodeIndex": edit_req.episodeIndex,
+            "globalTransform": edit_req.globalTransform.model_dump() if edit_req.globalTransform else None,
+            "cameraTransforms": {k: v.model_dump() for k, v in edit_req.cameraTransforms.items()}
+            if edit_req.cameraTransforms
+            else None,
+            "removedFrames": edit_req.removedFrames,
+            "insertedFrames": [i.model_dump() for i in edit_req.insertedFrames] if edit_req.insertedFrames else None,
+            "subtasks": [s.model_dump() for s in edit_req.subtasks] if edit_req.subtasks else None,
+            "trajectoryAdjustments": [a.model_dump() for a in edit_req.trajectoryAdjustments]
+            if edit_req.trajectoryAdjustments
+            else None,
+        }
+    )
 
 
 class ExportRequest(SanitizedModel):
@@ -198,21 +229,7 @@ async def export_episodes(
         if request.applyEdits and request.edits:
             edits_map = {}
             for episode_idx, edit_req in request.edits.items():
-                edits_map[episode_idx] = parse_edit_operations(
-                    {
-                        "datasetId": dataset_id,
-                        "episodeIndex": edit_req.episodeIndex,
-                        "globalTransform": edit_req.globalTransform.model_dump() if edit_req.globalTransform else None,
-                        "cameraTransforms": {k: v.model_dump() for k, v in edit_req.cameraTransforms.items()}
-                        if edit_req.cameraTransforms
-                        else None,
-                        "removedFrames": edit_req.removedFrames,
-                        "insertedFrames": [i.model_dump() for i in edit_req.insertedFrames]
-                        if edit_req.insertedFrames
-                        else None,
-                        "subtasks": [s.model_dump() for s in edit_req.subtasks] if edit_req.subtasks else None,
-                    }
-                )
+                edits_map[episode_idx] = _edit_operations(dataset_id, edit_req)
 
         result = exporter.export_episodes(
             episode_indices=request.episodeIndices,
@@ -308,23 +325,7 @@ async def export_episodes_stream(
             if request.applyEdits and request.edits:
                 edits_map = {}
                 for episode_idx, edit_req in request.edits.items():
-                    edits_map[episode_idx] = parse_edit_operations(
-                        {
-                            "datasetId": dataset_id,
-                            "episodeIndex": edit_req.episodeIndex,
-                            "globalTransform": edit_req.globalTransform.model_dump()
-                            if edit_req.globalTransform
-                            else None,
-                            "cameraTransforms": {k: v.model_dump() for k, v in edit_req.cameraTransforms.items()}
-                            if edit_req.cameraTransforms
-                            else None,
-                            "removedFrames": edit_req.removedFrames,
-                            "insertedFrames": [i.model_dump() for i in edit_req.insertedFrames]
-                            if edit_req.insertedFrames
-                            else None,
-                            "subtasks": [s.model_dump() for s in edit_req.subtasks] if edit_req.subtasks else None,
-                        }
-                    )
+                    edits_map[episode_idx] = _edit_operations(dataset_id, edit_req)
 
             # Queue for progress updates
             progress_queue: asyncio.Queue[ExportProgress | None] = asyncio.Queue()
