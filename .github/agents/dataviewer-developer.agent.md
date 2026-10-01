@@ -73,6 +73,7 @@ Proceed to Phase 2 for interactive browsing (requires browser automation tools),
 
 Use the integrated browser tools (`read_page`, `click_element`, `type_in_page`, `run_playwright_code`, `screenshot_page`) on the page the user sees, or the Playwright MCP tools (`mcp_playwright_browser_*`) headlessly on the same URL. If neither is available, use `open_browser_page` and guide the user through manual interaction.
 The Edit Tools trajectory editor's adjustments preview on the plot. HDF5 exports keep the recorded `data/qpos` and add the adjustments beside it as `data/qpos_adjusted`, with `data/qpos_adjusted_mask` marking the edited rows.
+LeRobot v3.0 sources export to a new LeRobot dataset in a new or empty folder. `observation.state` stays as recorded, the adjustments go to `adjusted.observation.state` and its mask, and `dataviewer-export.json` maps output frames to source frames.
 
 #### Available UI Interactions
 
