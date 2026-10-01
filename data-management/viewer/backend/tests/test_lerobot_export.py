@@ -190,6 +190,51 @@ def _digests(root: Path) -> dict[str, str]:
     }
 
 
+SPEECH = {
+    "role": "assistant",
+    "content": None,
+    "style": None,
+    "camera": None,
+    "tool_calls": [{"type": "function", "function": {"name": "say", "arguments": {"text": "grasping"}}}],
+}
+
+
+def _row(style: str, content: str, timestamp: float, role: str = "assistant") -> dict[str, Any]:
+    return {
+        "role": role,
+        "content": content,
+        "style": style,
+        "timestamp": timestamp,
+        "camera": None,
+        "tool_calls": None,
+    }
+
+
+def _add_language(
+    source: Path, persistent: dict[int, list[dict[str, Any]]], events: dict[tuple[int, int], list[dict[str, Any]]]
+) -> None:
+    """Add language columns laid out as lerobot's annotation writer does: persistent rows on every episode frame."""
+    path = source / "data/chunk-000/file-000.parquet"
+    table = pq.read_table(path)
+    keys = list(zip(table.column("episode_index").to_pylist(), table.column("frame_index").to_pylist(), strict=True))
+    table = table.append_column("language_persistent", pa.array([persistent.get(episode, []) for episode, _ in keys]))
+    table = table.append_column("language_events", pa.array([events.get(key, []) for key in keys]))
+    pq.write_table(table, path)
+    info = json.loads((source / "meta/info.json").read_text())
+    for name in ("language_persistent", "language_events"):
+        info["features"][name] = {"dtype": "language", "shape": [1], "names": None}
+    (source / "meta/info.json").write_text(json.dumps(info))
+
+
+def _language(output: Path, episode: int) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+    rows = _data(output).to_pylist()
+    return [(row["language_persistent"], row["language_events"]) for row in rows if row["episode_index"] == episode]
+
+
+def _summary(persistent: list[dict[str, Any]]) -> list[tuple[str, str, float]]:
+    return [(row["style"], row["content"], row["timestamp"]) for row in persistent]
+
+
 def test_removed_frames_renumber_the_timeline_and_leave_the_source_unchanged(source: Path) -> None:
     before = _digests(source)
 
@@ -348,6 +393,50 @@ def test_subtasks_are_remapped_to_output_frames_in_provenance(source: Path) -> N
         ("reach", [0, 4]),
         ("grasp", [5, 11]),
         ("gone", [3, 3]),
+    ]
+
+
+def test_source_language_rows_follow_the_edited_timeline(source: Path) -> None:
+    plan = _row("plan", "reach then grasp", 0.0)
+    _add_language(
+        source,
+        {
+            0: [plan, _row("subtask", "reach", 0.0), _row("subtask", "grasp", 0.5), _row("subtask", "lift", 1.1)],
+            1: [_row("subtask", "place", 0.0)],
+        },
+        {(0, 1): [SPEECH], (0, 3): [SPEECH]},
+    )
+    insertion = [FrameInsertion(after_frame_index=3, interpolation_factor=0.5)]
+
+    output = _export(source, [0, 1], _edits(0, removed_frames={1, 2, 11}, inserted_frames=insertion))
+
+    frames = _language(output, 0)
+    expected = [
+        ("plan", "reach then grasp", 0.0),
+        ("subtask", "reach", 0.0),
+        ("subtask", "grasp", float(np.float32(0.4))),
+    ]
+    assert [_summary(persistent) for persistent, _ in frames] == [expected] * 10
+    assert [len(events) for _, events in frames] == [0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+    assert [_summary(persistent) for persistent, _ in _language(output, 1)] == [[("subtask", "place", 0.0)]] * LENGTHS[
+        1
+    ]
+
+
+def test_source_language_rows_collapsed_by_removals_keep_the_latest(source: Path) -> None:
+    variants = [
+        _row("task_aug", "pick the part", 0.0, role="user"),
+        _row("task_aug", "grab the part", 0.0, role="user"),
+    ]
+    _add_language(source, {0: [*variants, _row("subtask", "reach", 0.1), _row("subtask", "grasp", 0.2)]}, {})
+
+    output = _export(source, [0], _edits(0, removed_frames={1, 2}))
+
+    persistent, _ = _language(output, 0)[0]
+    assert _summary(persistent) == [
+        ("task_aug", "pick the part", 0.0),
+        ("task_aug", "grab the part", 0.0),
+        ("subtask", "grasp", float(np.float32(0.1))),
     ]
 
 

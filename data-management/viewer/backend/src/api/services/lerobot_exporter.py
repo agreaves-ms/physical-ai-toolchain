@@ -4,9 +4,10 @@ LeRobot exporter: writes edited episodes of a LeRobot v3.0 dataset as a new v3.0
 The source dataset is never modified. Recorded features are copied unchanged, and trajectory
 adjustments become the derived ``adjusted.observation.state`` and ``adjusted.observation.state_mask``
 features. Removing or inserting frames renumbers the timeline so every timestamp stays
-``frame_index / fps``; ``dataviewer-export.json`` records which source frame each output frame
-came from, the applied edits and the remapped subtasks. Videos are decoded and re-encoded with
-the source's recorded encoder settings, and per-episode and dataset statistics are recomputed.
+``frame_index / fps``, and LeRobot language annotation rows move with it; ``dataviewer-export.json``
+records which source frame each output frame came from, the applied edits and the remapped subtasks.
+Videos are decoded and re-encoded with the source's recorded encoder settings, and per-episode and
+dataset statistics are recomputed.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from .episode_edits import (
 )
 from .frame_interpolation import interpolate_image
 from .image_transform import ImageTransform, ImageTransformError, apply_transform, get_output_dimensions
+from .lerobot_language import LANGUAGE_COLUMNS, LANGUAGE_EVENTS, LANGUAGE_PERSISTENT, plan_events, plan_persistent_rows
 from .lerobot_loader import LeRobotDatasetInfo, LeRobotLoader, LeRobotLoaderError
 
 STATE_FEATURE = "observation.state"
@@ -280,6 +282,13 @@ def _planned_column(array: pa.Array, plan: list[PlannedFrame]) -> pa.Array:
     return array.take(pa.array([frame.source for frame in plan], type=pa.int64()))
 
 
+def _timestamps(table: pa.Table, fps: float) -> list[float]:
+    """Return a table's per-frame timestamps, or ``frame_index / fps`` when it records none."""
+    if "timestamp" in table.column_names:
+        return [float(value) for value in table.column("timestamp").to_pylist()]
+    return [index / fps for index in range(table.num_rows)]
+
+
 def _transform_record(transform: ImageTransform | None) -> dict[str, Any] | None:
     if transform is None:
         return None
@@ -438,6 +447,8 @@ class LeRobotExporter:
         encoders = self._write_videos(root, info, episodes, sizes, progress_callback)
 
         data = pa.concat_tables(tables)
+        for name, column in self._language_columns(info, episodes, tables).items():
+            data = data.append_column(name, column)
         data_path = _inside(root, DATA_PATH.format(chunk_index=0, file_index=0))
         data_path.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(data, data_path)
@@ -489,6 +500,8 @@ class LeRobotExporter:
         }
         columns = {}
         for name in source.column_names:
+            if name in LANGUAGE_COLUMNS:
+                continue
             column = source.column(name).combine_chunks()
             if name in regenerated:
                 columns[name] = pa.array(regenerated[name].astype(column.type.to_pandas_dtype()), type=column.type)
@@ -505,6 +518,26 @@ class LeRobotExporter:
             columns[ADJUSTED_STATE] = _from_matrix(planned_adjusted, state.type)
             columns[ADJUSTED_STATE_MASK] = pa.array(np.any(planned_adjusted != planned_recorded, axis=1))
         return pa.table(columns)
+
+    @staticmethod
+    def _language_columns(
+        info: LeRobotDatasetInfo, episodes: list[_Episode], tables: list[pa.Table]
+    ) -> dict[str, pa.Array]:
+        """Return the source's language columns planned onto the output frames, or none when it has none."""
+        present = [name for name in LANGUAGE_COLUMNS if all(name in episode.table.column_names for episode in episodes)]
+        values = {name: [] for name in present}
+        for episode, table in zip(episodes, tables, strict=True):
+            source = episode.table
+            if LANGUAGE_PERSISTENT in values:
+                rows = source.column(LANGUAGE_PERSISTENT)[0].as_py() or []
+                planned = plan_persistent_rows(
+                    rows, _timestamps(source, info.fps), episode.plan, _timestamps(table, info.fps)
+                )
+                values[LANGUAGE_PERSISTENT].extend([planned] * episode.length)
+            if LANGUAGE_EVENTS in values:
+                values[LANGUAGE_EVENTS].extend(plan_events(source.column(LANGUAGE_EVENTS).to_pylist(), episode.plan))
+        # Types are inferred from the rows, as lerobot's writer does; its JSON element type can't be built from Python.
+        return {name: pa.array(rows) for name, rows in values.items()}
 
     def _write_videos(
         self,
