@@ -143,23 +143,6 @@ export interface SubtaskSegment {
 // Export Types
 // ============================================================================
 
-/** HDF5 export format options */
-export type HDF5ExportFormat = 'hdf5' | 'parquet'
-
-/** Export request payload */
-export interface ExportRequest {
-  /** Episode indices to export */
-  episodeIndices: number[]
-  /** Output directory path */
-  outputPath: string
-  /** Whether to apply edit operations */
-  applyEdits: boolean
-  /** Whether to include sub-task metadata */
-  includeSubtasks: boolean
-  /** Output format */
-  format: HDF5ExportFormat
-}
-
 /** Export progress update from SSE */
 export interface ExportProgress {
   /** Current episode being processed */

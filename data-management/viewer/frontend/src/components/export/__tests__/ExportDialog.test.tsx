@@ -3,12 +3,17 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ExportDialog } from '@/components/export/ExportDialog'
+import { useCapabilities } from '@/hooks/use-datasets'
 import { useExport } from '@/hooks/use-export'
 import { getEffectiveFrameCount, useEditStore, useEpisodeStore } from '@/stores'
 import { renderWithQuery } from '@/test-utils/render'
 
 vi.mock('@/hooks/use-export', () => ({
   useExport: vi.fn(),
+}))
+
+vi.mock('@/hooks/use-datasets', () => ({
+  useCapabilities: vi.fn(),
 }))
 
 vi.mock('@/stores', () => ({
@@ -43,6 +48,12 @@ function createUseExportReturn(overrides: Partial<ReturnType<typeof useExport>> 
   } as ReturnType<typeof useExport>
 }
 
+function mockCapabilities(isLerobotDataset: boolean | undefined) {
+  vi.mocked(useCapabilities).mockReturnValue({
+    data: isLerobotDataset === undefined ? undefined : { isLerobotDataset },
+  } as ReturnType<typeof useCapabilities>)
+}
+
 describe('ExportDialog', () => {
   let editState: MockEditState
   let episodeState: MockEpisodeState
@@ -65,6 +76,7 @@ describe('ExportDialog', () => {
     )
     vi.mocked(getEffectiveFrameCount).mockReturnValue(100)
     vi.mocked(useExport).mockReturnValue(createUseExportReturn())
+    mockCapabilities(undefined)
   })
 
   afterEach(() => {
@@ -113,10 +125,56 @@ describe('ExportDialog', () => {
         episodeIndices: [0, 1],
         outputPath: '/exports',
         applyEdits: true,
-        includeSubtasks: true,
-        format: 'hdf5',
       }),
     )
+    expect(startExport.mock.calls[0][0]).not.toHaveProperty('format')
+    expect(startExport.mock.calls[0][0]).not.toHaveProperty('includeSubtasks')
+  })
+
+  it('says a LeRobot source exports a new LeRobot dataset', () => {
+    mockCapabilities(true)
+
+    renderWithQuery(
+      <ExportDialog open onOpenChange={vi.fn()} datasetId="dataset-1" episodeIndices={[0]} />,
+    )
+
+    expect(screen.getByText(/as a new LeRobot dataset/i)).toBeInTheDocument()
+    expect(screen.getByText(/new or empty output directory/i)).toBeInTheDocument()
+  })
+
+  it('says an HDF5 source exports HDF5 episode files', () => {
+    mockCapabilities(false)
+
+    renderWithQuery(
+      <ExportDialog open onOpenChange={vi.fn()} datasetId="dataset-1" episodeIndices={[0]} />,
+    )
+
+    expect(screen.getByText(/to HDF5 episode files/i)).toBeInTheDocument()
+  })
+
+  it('leaves subtasks out of the request when subtask metadata is unchecked', async () => {
+    const user = userEvent.setup()
+    const startExport = vi.fn()
+    vi.mocked(useExport).mockReturnValue(createUseExportReturn({ startExport }))
+    const subtasks = [
+      { id: 's1', label: 'grasp', frameRange: [0, 9], color: '#ff0000', source: 'manual' },
+    ]
+    editState.getEditOperations = vi.fn(() => ({
+      datasetId: 'dataset-1',
+      episodeIndex: 0,
+      removedFrames: [3],
+      subtasks,
+    }))
+
+    renderWithQuery(
+      <ExportDialog open onOpenChange={vi.fn()} datasetId="dataset-1" episodeIndices={[0]} />,
+    )
+    await user.click(screen.getByLabelText(/include subtask metadata/i))
+    await user.click(screen.getByRole('button', { name: /start export/i }))
+
+    const edits = startExport.mock.calls[0][0].edits[0]
+    expect(edits.removedFrames).toEqual([3])
+    expect(edits.subtasks).toBeUndefined()
   })
 
   it('renders progress UI and Cancel Export button while exporting', () => {
@@ -265,7 +323,6 @@ describe('ExportDialog', () => {
       expect.objectContaining({
         outputPath: '/new/path',
         applyEdits: false,
-        includeSubtasks: false,
       }),
     )
   })

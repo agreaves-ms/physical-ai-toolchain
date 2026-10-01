@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useCapabilities } from '@/hooks/use-datasets'
 import { useExport } from '@/hooks/use-export'
 import { getEffectiveFrameCount, useEditStore } from '@/stores'
 import { useEpisodeStore } from '@/stores'
@@ -24,6 +25,13 @@ interface ExportDialogProps {
   onOpenChange: (open: boolean) => void
   datasetId: string
   episodeIndices: number[]
+}
+
+function describeExport(count: number, lerobot: boolean | undefined): string {
+  if (lerobot === undefined) return `Export ${count} episode(s) with applied edits.`
+  return lerobot
+    ? `Export ${count} episode(s) as a new LeRobot dataset with applied edits. Use a new or empty output directory.`
+    : `Export ${count} episode(s) to HDF5 episode files with applied edits.`
 }
 
 /**
@@ -43,6 +51,7 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
   const { isExporting, progress, result, error, startExport, cancelExport, reset } = useExport({
     datasetId,
   })
+  const { data: capabilities } = useCapabilities(datasetId)
 
   // Calculate effective frame count based on edits
   const effectiveFrameCount = useMemo(() => {
@@ -53,13 +62,13 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
   }, [applyEdits, totalFrames, insertedFrames, removedFrames])
 
   const handleExport = () => {
-    const edits = applyEdits ? getEditOperations() : null
+    const operations = applyEdits ? getEditOperations() : null
+    const edits =
+      operations && !includeSubtasks ? { ...operations, subtasks: undefined } : operations
     const request: ExportRequestWithEdits = {
       episodeIndices,
       outputPath,
       applyEdits,
-      includeSubtasks,
-      format: 'hdf5',
       edits: edits ? { [edits.episodeIndex]: edits } : undefined,
     }
     startExport(request)
@@ -93,7 +102,7 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
         <DialogHeader>
           <DialogTitle>Export Episodes</DialogTitle>
           <DialogDescription>
-            Export {episodeIndices.length} episode(s) with applied edits.
+            {describeExport(episodeIndices.length, capabilities?.isLerobotDataset)}
           </DialogDescription>
         </DialogHeader>
 

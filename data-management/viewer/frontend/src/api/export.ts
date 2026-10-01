@@ -14,8 +14,6 @@ export interface ExportRequestWithEdits {
   episodeIndices: number[]
   outputPath: string
   applyEdits: boolean
-  includeSubtasks: boolean
-  format: 'hdf5' | 'parquet'
   edits?: Record<number, EpisodeEditOperations>
 }
 
