@@ -14,14 +14,16 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import shutil
-import tempfile
+import stat
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import av
 import numpy as np
@@ -49,6 +51,8 @@ STATE_FEATURE = "observation.state"
 ADJUSTED_STATE = "adjusted.observation.state"
 ADJUSTED_STATE_MASK = "adjusted.observation.state_mask"
 PROVENANCE_FILE = "dataviewer-export.json"
+DATA_PATH = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+VIDEO_PATH = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 
 _SUPPORTED_VERSION = "v3.0"
 _TIMELINE = ("timestamp", "frame_index", "episode_index", "index")
@@ -61,6 +65,8 @@ _ENCODERS = {
     "hevc": "libx265",
     "libx265": "libx265",
 }
+_ENCODER_DEFAULTS = {"g": 2, "crf": 30}
+_LIBSVTAV1_DEFAULT_PRESET = 12
 _QUANTILES = (1, 10, 50, 90, 99)
 _IMAGE_SAMPLES = 100
 _IMAGE_STATS_SIZE = 150
@@ -146,12 +152,17 @@ class _VideoOutput:
         encoder = _ENCODERS.get(codec)
         if encoder is None:
             raise LeRobotExportError(f"video codec {codec!r} cannot be re-encoded")
-        options = {
-            key: str(video_info[f"video.{key}"]) for key in ("g", "crf") if video_info.get(f"video.{key}") is not None
+        recorded = {key: video_info.get(f"video.{key}") for key in _ENCODER_DEFAULTS}
+        # Settings the source did not record fall back to LeRobot's encoder defaults.
+        self.settings: dict[str, Any] = {
+            key: default if recorded[key] is None else recorded[key] for key, default in _ENCODER_DEFAULTS.items()
         }
         preset = video_info.get("video.preset")
+        if preset is None and encoder == "libsvtav1":
+            preset = _LIBSVTAV1_DEFAULT_PRESET
         if preset is not None and isinstance(preset, int) == (encoder == "libsvtav1"):
-            options["preset"] = str(preset)
+            self.settings["preset"] = preset
+        options = {key: str(value) for key, value in self.settings.items()}
         rate = Fraction(fps).limit_denominator(1001)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._container = av.open(str(path), "w")
@@ -206,27 +217,51 @@ def _image_stats(samples: list[NDArray[np.uint8]]) -> dict[str, Any]:
     return stats
 
 
+def _is_vector(data_type: pa.DataType) -> bool:
+    return pa.types.is_fixed_size_list(data_type) or pa.types.is_list(data_type) or pa.types.is_large_list(data_type)
+
+
+def _element_type(data_type: pa.DataType) -> pa.DataType:
+    return data_type.value_type if _is_vector(data_type) else data_type
+
+
 def _matrix(array: pa.Array) -> NDArray[np.float64]:
-    """Return a numeric column as a ``(rows, width)`` float64 matrix."""
+    """Return a numeric column, scalar or vector, as a ``(rows, width)`` float64 matrix."""
     if pa.types.is_fixed_size_list(array.type):
-        values = array.flatten().to_numpy(zero_copy_only=False)
-        return values.astype(np.float64).reshape(len(array), array.type.list_size)
-    return array.to_numpy(zero_copy_only=False).astype(np.float64).reshape(len(array), 1)
+        width = array.type.list_size
+    elif _is_vector(array.type):
+        lengths = set(array.value_lengths().to_numpy(zero_copy_only=False).tolist())
+        if len(lengths) > 1:
+            raise LeRobotExportError("a vector column has rows of different lengths")
+        width = lengths.pop() if lengths else 0
+    else:
+        return array.to_numpy(zero_copy_only=False).astype(np.float64).reshape(len(array), 1)
+    return array.flatten().to_numpy(zero_copy_only=False).astype(np.float64).reshape(len(array), width)
 
 
 def _from_matrix(matrix: NDArray[np.float64], data_type: pa.DataType) -> pa.Array:
-    """Rebuild a column of ``data_type`` from a ``(rows, width)`` matrix."""
+    """Rebuild a column of ``data_type``, keeping its list layout, from a ``(rows, width)`` matrix."""
+    element = _element_type(data_type)
+    if not _is_vector(data_type):
+        return pa.array(matrix[:, 0].astype(element.to_pandas_dtype()), type=data_type)
+    values = pa.array(matrix.reshape(-1).astype(element.to_pandas_dtype()), type=element)
     if pa.types.is_fixed_size_list(data_type):
-        value_type = data_type.value_type
-        values = pa.array(matrix.reshape(-1).astype(value_type.to_pandas_dtype()), type=value_type)
-        return pa.FixedSizeListArray.from_arrays(values, data_type.list_size)
-    return pa.array(matrix[:, 0].astype(data_type.to_pandas_dtype()), type=data_type)
+        return pa.FixedSizeListArray.from_arrays(values, type=data_type)
+    large = pa.types.is_large_list(data_type)
+    offsets = pa.array(np.arange(0, matrix.size + 1, matrix.shape[1]), type=pa.int64() if large else pa.int32())
+    return (pa.LargeListArray if large else pa.ListArray).from_arrays(offsets, values, type=data_type)
 
 
 def _is_floating(data_type: pa.DataType) -> bool:
-    if pa.types.is_fixed_size_list(data_type):
-        return pa.types.is_floating(data_type.value_type)
-    return pa.types.is_floating(data_type)
+    return pa.types.is_floating(_element_type(data_type))
+
+
+def _inside(root: Path, relative: str) -> Path:
+    """Return ``root / relative``, refusing any path that would land outside ``root``."""
+    path = root / relative
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise LeRobotExportError(f"export path {relative!r} would leave the output directory")
+    return path
 
 
 def _interpolate(matrix: NDArray[np.float64], plan: list[PlannedFrame]) -> NDArray[np.float64]:
@@ -304,11 +339,12 @@ class LeRobotExporter:
             episodes = self._episodes(info, episode_indices, edits_map or {})
             sizes = self._video_sizes(info, episodes)
             self.dst_path.parent.mkdir(parents=True, exist_ok=True)
-            staging = Path(
-                tempfile.mkdtemp(prefix=f".{self.dst_path.name}-", suffix=".partial", dir=self.dst_path.parent)
-            )
+            # A plain mkdir applies the process umask, unlike mkdtemp's fixed 0700.
+            staging = self.dst_path.parent / f".{self.dst_path.name}-{uuid4().hex}.partial"
+            staging.mkdir()
             self._write(staging, info, episodes, sizes, started, progress_callback)
             if self.dst_path.exists():
+                os.chmod(staging, stat.S_IMODE(self.dst_path.stat().st_mode))
                 self.dst_path.rmdir()
             staging.rename(self.dst_path)
             staging = None
@@ -366,6 +402,8 @@ class LeRobotExporter:
         for camera, feature in info.features.items():
             if feature.get("dtype") != "video":
                 continue
+            if camera in {"", ".", ".."} or "/" in camera or "\\" in camera:
+                raise LeRobotExportError(f"video feature key {camera!r} is not a plain name")
             video_info = feature.get("info", {})
             if video_info.get("video.is_depth_map") or video_info.get("is_depth_map"):
                 raise LeRobotExportError(f"depth video {camera} cannot be exported")
@@ -397,14 +435,14 @@ class LeRobotExporter:
         if adjusted and STATE_FEATURE not in info.features:
             raise LeRobotExportError(f"trajectory adjustments need an {STATE_FEATURE} feature")
         tables = [self._episode_table(info, episode, adjusted) for episode in episodes]
-        self._write_videos(root, info, episodes, sizes, progress_callback)
+        encoders = self._write_videos(root, info, episodes, sizes, progress_callback)
 
         data = pa.concat_tables(tables)
-        data_path = root / info.data_path.format(chunk_index=0, file_index=0)
+        data_path = _inside(root, DATA_PATH.format(chunk_index=0, file_index=0))
         data_path.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(data, data_path)
 
-        features = self._features(info, sizes, adjusted)
+        features = self._features(info, sizes, encoders, adjusted)
         stats_features = [
             name
             for name, feature in features.items()
@@ -431,6 +469,8 @@ class LeRobotExporter:
             total_episodes=len(episodes),
             total_frames=data.num_rows,
             splits={"train": f"0:{len(episodes)}"},
+            data_path=DATA_PATH,
+            video_path=VIDEO_PATH,
         )
         (root / "meta/info.json").write_text(json.dumps(raw, indent=4))
         shutil.copyfile(self.src_path / "meta/tasks.parquet", root / "meta/tasks.parquet")
@@ -456,7 +496,7 @@ class LeRobotExporter:
                 columns[name] = _planned_column(column, plan)
         if adjusted:
             state = source.column(STATE_FEATURE).combine_chunks()
-            dtype = (state.type.value_type if pa.types.is_fixed_size_list(state.type) else state.type).to_pandas_dtype()
+            dtype = _element_type(state.type).to_pandas_dtype()
             recorded = _matrix(state)
             adjustments = episode.edits.trajectory_adjustments if episode.edits else None
             changed = apply_trajectory_adjustments(recorded, adjustments) if adjustments else recorded
@@ -473,13 +513,16 @@ class LeRobotExporter:
         episodes: list[_Episode],
         sizes: dict[str, tuple[int, int]],
         progress_callback: ProgressCallback | None,
-    ) -> None:
+    ) -> dict[str, dict[str, Any]]:
+        """Encode every camera's video and return the encoder settings used for each."""
         total = max(1, sum(episode.length for episode in episodes) * len(sizes))
         written = 0
+        encoders = {}
         for camera, size in sizes.items():
             video_info = info.features[camera].get("info", {})
-            path = root / info.video_path.format(video_key=camera, chunk_index=0, file_index=0)
+            path = _inside(root, VIDEO_PATH.format(video_key=camera, chunk_index=0, file_index=0))
             output = _VideoOutput(path, video_info, size, info.fps)
+            encoders[camera] = output.settings
             try:
                 for episode in episodes:
                     source = self.loader.get_video_path(episode.source_index, camera)
@@ -506,6 +549,7 @@ class LeRobotExporter:
                         )
             finally:
                 output.close()
+        return encoders
 
     @staticmethod
     def _write_episode_video(
@@ -532,13 +576,19 @@ class LeRobotExporter:
 
     @staticmethod
     def _features(
-        info: LeRobotDatasetInfo, sizes: dict[str, tuple[int, int]], adjusted: bool
+        info: LeRobotDatasetInfo,
+        sizes: dict[str, tuple[int, int]],
+        encoders: dict[str, dict[str, Any]],
+        adjusted: bool,
     ) -> dict[str, dict[str, Any]]:
         features = copy.deepcopy(info.features)
         for camera, (width, height) in sizes.items():
             feature = features[camera]
             feature["shape"] = [height, width, *feature["shape"][2:]]
-            feature.setdefault("info", {}).update({"video.height": height, "video.width": width})
+            feature.setdefault("info", {}).update(
+                {"video.height": height, "video.width": width}
+                | {f"video.{key}": value for key, value in encoders[camera].items()}
+            )
         if adjusted:
             state = features[STATE_FEATURE]
             features[ADJUSTED_STATE] = {"dtype": state["dtype"], "shape": state["shape"], "names": state.get("names")}
@@ -569,11 +619,11 @@ class LeRobotExporter:
             )
         row.update({"meta/episodes/chunk_index": 0, "meta/episodes/file_index": 0})
         for name in stats_features:
-            for stat, value in _numeric_stats(_matrix(table.column(name).combine_chunks())).items():
-                row[f"stats/{name}/{stat}"] = value
+            for statistic, value in _numeric_stats(_matrix(table.column(name).combine_chunks())).items():
+                row[f"stats/{name}/{statistic}"] = value
         for camera, samples in episode.image_samples.items():
-            for stat, value in _image_stats(samples).items():
-                row[f"stats/{camera}/{stat}"] = value
+            for statistic, value in _image_stats(samples).items():
+                row[f"stats/{camera}/{statistic}"] = value
         return row
 
     def _provenance(self, info: LeRobotDatasetInfo, episodes: list[_Episode], started: datetime) -> dict[str, Any]:

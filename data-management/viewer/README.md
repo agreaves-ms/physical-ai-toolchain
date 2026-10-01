@@ -603,7 +603,7 @@ Supported fields include object, pickup location, grasp outcome, place outcome, 
 A LeRobot export:
 
 - keeps every recorded feature;
-- re-encodes the videos with the source's recorded encoder settings;
+- re-encodes the videos with the source's recorded encoder settings, falling back to LeRobot's defaults for any setting the source doesn't record;
 - recomputes the per-episode and dataset statistics.
 
 Removing or inserting frames renumbers `frame_index` and sets `timestamp` to `frame_index / fps`. `dataviewer-export.json` maps each output frame to its source frame and records the edits and remapped subtasks.

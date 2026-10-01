@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ def _state(episode: int, frame: int) -> list[float]:
     return [float(episode), float(frame), float(episode * 100 + frame)]
 
 
-def _write_source(root: Path) -> Path:
+def _write_source(root: Path, vector: pa.DataType | None = None) -> Path:
     """Write a two-episode v3.0 dataset whose frames and rows encode their episode and frame."""
     (root / "meta/episodes/chunk-000").mkdir(parents=True)
     (root / "data/chunk-000").mkdir(parents=True)
@@ -80,7 +81,7 @@ def _write_source(root: Path) -> Path:
             }
         )
         offset += length
-    vector = pa.list_(pa.float32(), 3)
+    vector = vector or pa.list_(pa.float32(), 3)
     total = len(rows["frame"])
     data = pa.table(
         {
@@ -349,9 +350,71 @@ def test_subtasks_are_remapped_to_output_frames_in_provenance(source: Path) -> N
     ]
 
 
+def test_writes_use_standard_paths_even_when_source_templates_point_elsewhere(source: Path) -> None:
+    info = json.loads((source / "meta/info.json").read_text())
+    info["data_path"] = "../lerobot/data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+    (source / "meta/info.json").write_text(json.dumps(info))
+
+    output = _export(source, [0])
+
+    assert (output / "data/chunk-000/file-000.parquet").is_file()
+    assert not (source.parents[1] / "lerobot").exists()
+    assert _info(output)["data_path"] == "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+
+
+def test_variable_length_vectors_interpolate_and_keep_their_list_type(tmp_path: Path) -> None:
+    source = _write_source(tmp_path / "datasets/capture/lerobot", vector=pa.list_(pa.float32()))
+    insertion = [FrameInsertion(after_frame_index=4, interpolation_factor=0.5)]
+
+    output = _export(source, [0], _edits(0, inserted_frames=insertion))
+
+    data = _data(output)
+    assert data.schema.field("observation.state").type == pa.list_(pa.float32())
+    expected = 0.5 * np.array(_state(0, 4)) + 0.5 * np.array(_state(0, 5))
+    np.testing.assert_allclose(data.column("observation.state")[5].as_py(), expected)
+    stats = json.loads((output / "meta/stats.json").read_text())
+    assert stats["observation.state"]["count"] == [13]
+    assert len(stats["observation.state"]["mean"]) == 3
+
+
+def test_unrecorded_encoder_settings_fall_back_to_lerobot_defaults(source: Path) -> None:
+    info = json.loads((source / "meta/info.json").read_text())
+    for key in ("video.g", "video.crf"):
+        del info["features"][CAMERA]["info"][key]
+    (source / "meta/info.json").write_text(json.dumps(info))
+
+    output = _export(source, [0])
+
+    video_info = _info(output)["features"][CAMERA]["info"]
+    assert (video_info["video.g"], video_info["video.crf"]) == (2, 30)
+    with av.open(str(_video(output))) as container:
+        keyframes = sum(frame.key_frame for frame in container.decode(video=0))
+    assert keyframes >= 6
+
+
+def test_export_root_mode_follows_the_umask_or_the_existing_directory(source: Path, tmp_path: Path) -> None:
+    probe = tmp_path / "probe"
+    probe.mkdir()
+
+    output = _export(source, [0])
+
+    assert stat.S_IMODE(output.stat().st_mode) == stat.S_IMODE(probe.stat().st_mode)
+    existing = source.parents[1] / "existing"
+    existing.mkdir()
+    existing.chmod(0o750)
+    assert LeRobotExporter(source, existing).export_episodes([0]).success
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o750
+
+
 def _break_version(source: Path) -> None:
     info = json.loads((source / "meta/info.json").read_text())
     (source / "meta/info.json").write_text(json.dumps({**info, "codebase_version": "v2.1"}))
+
+
+def _escape_camera_key(source: Path) -> None:
+    info = json.loads((source / "meta/info.json").read_text())
+    info["features"]["../escape"] = info["features"].pop(CAMERA)
+    (source / "meta/info.json").write_text(json.dumps(info))
 
 
 def _shorten_video_window(source: Path) -> None:
@@ -385,6 +448,7 @@ def _shorten_video_window(source: Path) -> None:
             "video window holds 10 frames for 12 data rows",
         ),
         (None, [0, 0], None, "only once"),
+        (_escape_camera_key, [0], None, "is not a plain name"),
     ],
 )
 def test_failed_exports_leave_nothing_behind(
