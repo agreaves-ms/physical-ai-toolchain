@@ -165,14 +165,14 @@ The `Test-BinaryFreshness.ps1` script is invoked by the `check-binary-integrity.
 
 Findings are written to `binary-freshness-results.sarif` with per-rule `helpUri` values pointing at the appropriate remediation script. The check distinguishes integrity failures from advisory chart drift and unavailable upstream lookups:
 
-| Result | SARIF | Scanner exit | Workflow effect |
-|--------|-------|--------------|-----------------|
-| Clean | No findings | `0` | Success after SARIF upload |
-| Confirmed binary hash mismatch | Warning, `hash-mismatch` | `1` | Failure; SARIF still uploads |
-| Chart version drift | Warning, `version-drift` | `0` | Success with visible alert |
-| Binary download or chart lookup unavailable | Warning, `download-failure` or `lookup-failure` | `0` | Success with visible alert |
-| Scanner setup or report error | SARIF may be absent | `2` | Failure |
-| SARIF ingestion error | Upload step fails | Scanner exit unchanged | Failure |
+| Result                                      | SARIF                                           | Scanner exit           | Workflow effect              |
+|---------------------------------------------|-------------------------------------------------|------------------------|------------------------------|
+| Clean                                       | No findings                                     | `0`                    | Success after SARIF upload   |
+| Confirmed binary hash mismatch              | Warning, `hash-mismatch`                        | `1`                    | Failure; SARIF still uploads |
+| Chart version drift                         | Warning, `version-drift`                        | `0`                    | Success with visible alert   |
+| Binary download or chart lookup unavailable | Warning, `download-failure` or `lookup-failure` | `0`                    | Success with visible alert   |
+| Scanner setup or report error               | SARIF may be absent                             | `2`                    | Failure                      |
+| SARIF ingestion error                       | Upload step fails                               | Scanner exit unchanged | Failure                      |
 
 A successful HTTP response is not sufficient evidence for a binary mismatch: the scanner rejects JSON/HTML responses and malformed ZIP/GZIP bodies before hashing. In September 2026 the pinned NGC CLI 3.41.4 URL returned a changing JSON status response rather than the expected ZIP archive. Do not replace the NGC SHA-256 pin with the hash of that response. Obtain and independently verify the ZIP through NVIDIA's supported download path before changing the pin.
 

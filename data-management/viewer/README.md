@@ -684,12 +684,12 @@ docker compose up --build
 
 Local storage requires write access to `DATAVIEWER_HOST_DATA_DIR` because annotations and labels are persisted atomically under each dataset directory. The backend validates create, flush, replace, and delete operations during startup and exits with the effective UID and GID when the mount is not writable.
 
-| Environment | Runtime identity |
-|-------------|------------------|
-| Docker Desktop for macOS or Windows | Uses the image-defined UID/GID 999 |
-| Rootful Docker Engine on Linux or directly inside WSL | Set `DATAVIEWER_UID` and `DATAVIEWER_GID` from `id -u` and `id -g` |
-| Rootless Docker | Set `DATAVIEWER_UID=0` and `DATAVIEWER_GID=0`; rootless UID 0 maps to the invoking host user |
-| Docker daemon with user-namespace remapping | Pre-arrange host directory ownership for the daemon's subordinate UID/GID mapping |
+| Environment                                           | Runtime identity                                                                             |
+|-------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| Docker Desktop for macOS or Windows                   | Uses the image-defined UID/GID 999                                                           |
+| Rootful Docker Engine on Linux or directly inside WSL | Set `DATAVIEWER_UID` and `DATAVIEWER_GID` from `id -u` and `id -g`                           |
+| Rootless Docker                                       | Set `DATAVIEWER_UID=0` and `DATAVIEWER_GID=0`; rootless UID 0 maps to the invoking host user |
+| Docker daemon with user-namespace remapping           | Pre-arrange host directory ownership for the daemon's subordinate UID/GID mapping            |
 
 > [!WARNING]
 > Do not use the rootless UID/GID 0 override with a rootful Docker daemon. It runs the backend as host-capable container root.
