@@ -20,14 +20,14 @@ from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt
 
 from ..csrf import require_csrf_token
 from ..services.dataset_service import DatasetService, get_dataset_service
-from ..services.hdf5_exporter import (
+from ..services.episode_edits import (
     EpisodeEditOperations,
+    ExportError,
     ExportProgress,
     ExportResult,
-    HDF5Exporter,
-    HDF5ExportError,
     parse_edit_operations,
 )
+from ..services.hdf5_exporter import HDF5Exporter
 from ..validation import (
     SAFE_DATASET_ID_PATTERN,
     SanitizedModel,
@@ -243,7 +243,7 @@ async def export_episodes(
             status_code=501,
             detail=f"Export not available: {e}",
         )
-    except HDF5ExportError as e:
+    except ExportError as e:
         raise HTTPException(
             status_code=500,
             detail=f"Export failed: {e}",

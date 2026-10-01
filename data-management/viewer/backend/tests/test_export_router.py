@@ -213,7 +213,7 @@ class TestExportEpisodes:
         dataset_layout,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from src.api.services.hdf5_exporter import TrajectoryAdjustment
+        from src.api.services.episode_edits import TrajectoryAdjustment
 
         _, _dataset, output_dir = dataset_layout
         exporter_instance = MagicMock()
@@ -375,7 +375,7 @@ class TestExportEpisodesStream:
         dataset_layout,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from src.api.services.hdf5_exporter import ExportProgress
+        from src.api.services.episode_edits import ExportProgress
 
         _, _dataset, output_dir = dataset_layout
 

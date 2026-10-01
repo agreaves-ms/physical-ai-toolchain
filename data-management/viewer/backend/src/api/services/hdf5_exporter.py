@@ -8,9 +8,10 @@ Exports episodes to new HDF5 files with:
 - Progress callbacks for streaming updates
 """
 
+from __future__ import annotations
+
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,13 +20,24 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..models.datasources import FrameInsertion
+from .episode_edits import (
+    EpisodeEditOperations,
+    ExportError,
+    ExportProgress,
+    ExportResult,
+    ProgressCallback,
+    SubtaskSegment,
+    TrajectoryAdjustment,
+    apply_trajectory_adjustments,
+    output_indices,
+    plan_frames,
+    remap_subtasks,
+)
 from .frame_interpolation import interpolate_frame_data, interpolate_image
 from .hdf5_loader import HDF5Loader, HDF5LoaderError
 from .image_transform import (
-    CropRegion,
     ImageTransform,
     ImageTransformError,
-    ResizeDimensions,
     apply_camera_transforms,
 )
 
@@ -38,99 +50,8 @@ except ImportError:
     HDF5_AVAILABLE = False
 
 
-@dataclass
-class SubtaskSegment:
-    """A labeled segment of frames representing a sub-task."""
-
-    id: str
-    """Unique identifier."""
-    label: str
-    """Human-readable label."""
-    frame_range: tuple[int, int]
-    """Frame range [start, end] inclusive."""
-    color: str
-    """Display color (hex)."""
-    source: str
-    """How this segment was created: 'manual' or 'auto'."""
-    description: str | None = None
-    """Optional description."""
-
-
-@dataclass
-class TrajectoryAdjustment:
-    """Per-frame change to joint positions, keyed by state channel index; a set value replaces that channel's delta."""
-
-    frame_index: int
-    """Original frame index the adjustment applies to."""
-    channel_deltas: dict[int, float] = field(default_factory=dict)
-    """Values added to channels."""
-    channel_values: dict[int, float] = field(default_factory=dict)
-    """Values that replace channels."""
-
-
-@dataclass
-class EpisodeEditOperations:
-    """Complete set of edit operations for an episode."""
-
-    dataset_id: str
-    """Dataset identifier."""
-    episode_index: int
-    """Episode index within the dataset."""
-    global_transform: ImageTransform | None = None
-    """Transform applied to all cameras."""
-    camera_transforms: dict[str, ImageTransform] | None = None
-    """Per-camera transform overrides."""
-    removed_frames: set[int] | None = None
-    """Frame indices to exclude from export."""
-    inserted_frames: list[FrameInsertion] | None = None
-    """Frame insertion specifications for interpolated frames."""
-    subtasks: list[SubtaskSegment] | None = None
-    """Sub-task segments for this episode."""
-    trajectory_adjustments: list[TrajectoryAdjustment] | None = None
-    """Joint-position adjustments, exported as a derived ``qpos_adjusted`` array beside the recorded ``qpos``."""
-
-
-@dataclass
-class ExportProgress:
-    """Progress update during export."""
-
-    current_episode: int
-    """Current episode being processed."""
-    total_episodes: int
-    """Total episodes to process."""
-    current_frame: int
-    """Current frame being processed."""
-    total_frames: int
-    """Total frames in current episode."""
-    percentage: float
-    """Overall progress percentage (0-100)."""
-    status: str
-    """Current operation description."""
-
-
-@dataclass
-class ExportResult:
-    """Result of an export operation."""
-
-    success: bool
-    """Whether export completed successfully."""
-    output_files: list[str]
-    """Output file paths."""
-    error: str | None = None
-    """Error message if failed."""
-    stats: dict[str, Any] = field(default_factory=dict)
-    """Export statistics."""
-
-
-class HDF5ExportError(Exception):
+class HDF5ExportError(ExportError):
     """Exception raised for HDF5 export failures."""
-
-    def __init__(self, message: str, cause: Exception | None = None):
-        super().__init__(message)
-        self.cause = cause
-
-
-ProgressCallback = Callable[[ExportProgress], None]
 
 
 class HDF5Exporter:
@@ -291,7 +212,8 @@ class HDF5Exporter:
             # Export subtasks if present
             if edits and edits.subtasks:
                 subtasks_path = self.dst_path / f"episode_{episode_index:06d}.subtasks.json"
-                self._export_subtasks(subtasks_path, edits.subtasks, valid_indices)
+                plan = plan_frames(total_frames, removed_frames, inserted_frames)
+                self._export_subtasks(subtasks_path, edits.subtasks, output_indices(plan))
                 output_files.append(str(subtasks_path))
 
             if progress_callback:
@@ -319,7 +241,7 @@ class HDF5Exporter:
                 },
             )
 
-        except (HDF5LoaderError, HDF5ExportError, ImageTransformError) as e:
+        except (HDF5LoaderError, ExportError, ImageTransformError) as e:
             return ExportResult(
                 success=False,
                 output_files=output_files,
@@ -479,31 +401,9 @@ class HDF5Exporter:
 
         return result
 
-    @staticmethod
-    def _apply_adjustments(positions: NDArray, adjustments: list[TrajectoryAdjustment]) -> NDArray:
-        """Return a copy of positions with each adjustment applied at its original frame."""
-        adjusted = np.array(positions, dtype=np.float64, copy=True)
-        frames, channels = adjusted.shape
-        for adjustment in adjustments:
-            if not 0 <= adjustment.frame_index < frames:
-                raise HDF5ExportError(
-                    f"trajectory adjustment frame {adjustment.frame_index} is outside the episode's {frames} frames"
-                )
-            for channel in (*adjustment.channel_deltas, *adjustment.channel_values):
-                if not 0 <= channel < channels:
-                    raise HDF5ExportError(
-                        f"trajectory adjustment channel {channel} is outside the episode's {channels} joint channels"
-                    )
-            for channel, delta in adjustment.channel_deltas.items():
-                if channel not in adjustment.channel_values:
-                    adjusted[adjustment.frame_index, channel] += delta
-            for channel, value in adjustment.channel_values.items():
-                adjusted[adjustment.frame_index, channel] = value
-        return adjusted
-
     def _export_trajectory_data(
         self,
-        dst: "h5py.File",
+        dst: h5py.File,
         episode: Any,
         valid_indices: list[int],
         inserted_frames: list[FrameInsertion] | None = None,
@@ -531,7 +431,7 @@ class HDF5Exporter:
 
         # Adjusted joint positions go beside the recorded ones, never over them.
         if trajectory_adjustments:
-            adjusted = process_data(self._apply_adjustments(episode.joint_positions, trajectory_adjustments))
+            adjusted = process_data(apply_trajectory_adjustments(episode.joint_positions, trajectory_adjustments))
             data_group.create_dataset(
                 "qpos_adjusted",
                 data=adjusted,
@@ -586,7 +486,7 @@ class HDF5Exporter:
 
     def _export_images(
         self,
-        dst: "h5py.File",
+        dst: h5py.File,
         images: dict[str, NDArray[np.uint8]],
         valid_indices: list[int],
         global_transform: ImageTransform | None,
@@ -668,7 +568,7 @@ class HDF5Exporter:
 
     def _export_metadata(
         self,
-        dst: "h5py.File",
+        dst: h5py.File,
         episode: Any,
         edits: EpisodeEditOperations | None,
     ) -> None:
@@ -758,113 +658,7 @@ class HDF5Exporter:
         self,
         path: Path,
         subtasks: list[SubtaskSegment],
-        valid_indices: list[int],
+        index_map: dict[int, int],
     ) -> None:
-        """Export subtask segments with adjusted frame indices."""
-        # Create index mapping from original to new frame indices
-        index_map = {orig: new for new, orig in enumerate(valid_indices)}
-
-        adjusted_subtasks = []
-        for st in subtasks:
-            # Adjust frame range to new indices
-            new_start = index_map.get(st.frame_range[0])
-            new_end = index_map.get(st.frame_range[1])
-
-            # Skip if segment is entirely removed
-            if new_start is None or new_end is None:
-                continue
-
-            adjusted_subtasks.append(
-                {
-                    "id": st.id,
-                    "label": st.label,
-                    "frame_range": [new_start, new_end],
-                    "color": st.color,
-                    "source": st.source,
-                    "description": st.description,
-                }
-            )
-
-        path.write_text(json.dumps(adjusted_subtasks, indent=2))
-
-
-def parse_edit_operations(data: dict) -> EpisodeEditOperations:
-    """
-    Parse edit operations from API request data.
-
-    Args:
-        data: Dict with edit operation fields.
-
-    Returns:
-        EpisodeEditOperations instance.
-    """
-    global_transform = None
-    if data.get("globalTransform"):
-        gt = data["globalTransform"]
-        global_transform = ImageTransform(
-            crop=CropRegion(**gt["crop"]) if gt.get("crop") else None,
-            resize=ResizeDimensions(**gt["resize"]) if gt.get("resize") else None,
-        )
-
-    camera_transforms = None
-    if data.get("cameraTransforms"):
-        camera_transforms = {}
-        for camera, ct in data["cameraTransforms"].items():
-            camera_transforms[camera] = ImageTransform(
-                crop=CropRegion(**ct["crop"]) if ct.get("crop") else None,
-                resize=ResizeDimensions(**ct["resize"]) if ct.get("resize") else None,
-            )
-
-    removed_frames = None
-    if data.get("removedFrames"):
-        removed_frames = set(data["removedFrames"])
-
-    inserted_frames = None
-    if data.get("insertedFrames"):
-        inserted_frames = [
-            FrameInsertion(
-                after_frame_index=ins["afterFrameIndex"],
-                interpolation_factor=ins.get("interpolationFactor", 0.5),
-            )
-            for ins in data["insertedFrames"]
-        ]
-
-    subtasks = None
-    if data.get("subtasks"):
-        subtasks = [
-            SubtaskSegment(
-                id=st["id"],
-                label=st["label"],
-                frame_range=tuple(st["frameRange"]),
-                color=st["color"],
-                source=st["source"],
-                description=st.get("description"),
-            )
-            for st in data["subtasks"]
-        ]
-
-    trajectory_adjustments = None
-    if data.get("trajectoryAdjustments"):
-        trajectory_adjustments = [
-            TrajectoryAdjustment(
-                frame_index=adjustment["frameIndex"],
-                channel_deltas={
-                    int(channel): float(value) for channel, value in (adjustment.get("channelDeltas") or {}).items()
-                },
-                channel_values={
-                    int(channel): float(value) for channel, value in (adjustment.get("channelValues") or {}).items()
-                },
-            )
-            for adjustment in data["trajectoryAdjustments"]
-        ]
-
-    return EpisodeEditOperations(
-        dataset_id=data.get("datasetId", ""),
-        episode_index=data.get("episodeIndex", 0),
-        global_transform=global_transform,
-        camera_transforms=camera_transforms,
-        removed_frames=removed_frames,
-        inserted_frames=inserted_frames,
-        subtasks=subtasks,
-        trajectory_adjustments=trajectory_adjustments,
-    )
+        """Export subtask segments with frame ranges mapped to output indices."""
+        path.write_text(json.dumps(remap_subtasks(subtasks, index_map), indent=2))

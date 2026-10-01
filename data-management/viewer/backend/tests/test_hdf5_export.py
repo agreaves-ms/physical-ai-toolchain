@@ -16,13 +16,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api.models.datasources import FrameInsertion
-from src.api.services.hdf5_exporter import (
+from src.api.services.episode_edits import (
     EpisodeEditOperations,
-    HDF5Exporter,
     SubtaskSegment,
     TrajectoryAdjustment,
     parse_edit_operations,
 )
+from src.api.services.hdf5_exporter import HDF5Exporter
 
 # ============================================================================
 # Helpers
@@ -357,6 +357,23 @@ class TestExportEpisode:
         subtasks = json.loads(subtasks_path.read_text())
         assert len(subtasks) == 2
         assert subtasks[0]["label"] == "Reach"
+
+    def test_export_maps_subtasks_across_inserted_frames(self, exporter: HDF5Exporter, hdf5_export_dir: Path):
+        edits = EpisodeEditOperations(
+            dataset_id="test",
+            episode_index=0,
+            removed_frames={1},
+            inserted_frames=[FrameInsertion(after_frame_index=2, interpolation_factor=0.5)],
+            subtasks=[
+                SubtaskSegment(id="st-1", label="Reach", frame_range=(0, 2), color="#ff0000", source="manual"),
+                SubtaskSegment(id="st-2", label="Grasp", frame_range=(3, 9), color="#00ff00", source="manual"),
+            ],
+        )
+
+        assert exporter.export_episode(episode_index=0, edits=edits).success is True
+
+        subtasks = json.loads((hdf5_export_dir / "episode_000000.subtasks.json").read_text())
+        assert [subtask["frame_range"] for subtask in subtasks] == [[0, 1], [3, 9]]
 
     def test_export_nonexistent_episode(self, exporter: HDF5Exporter):
         result = exporter.export_episode(episode_index=999)
