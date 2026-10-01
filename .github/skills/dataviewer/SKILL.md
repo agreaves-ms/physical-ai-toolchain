@@ -17,7 +17,9 @@ The backend virtual environment and repository-root npm workspace dependencies a
 
 ## Launch and Connect Workflow
 
-Follow these steps in order every time the dataviewer is started.
+Follow these steps in order every time you start or connect to the dataviewer.
+
+When a caller or workflow supplies the URL of a Dataviewer it already runs, such as the instance the Sim Workspace Command Center opens for a workspace, skip Step 1 and open that URL in Step 2. Start `start.sh` only when no running instance is supplied, so one dataset folder never gets a second Dataviewer.
 
 ### Step 1 — Start the app
 
@@ -35,21 +37,26 @@ With a custom dataset path:
 cd data-management/viewer && ./start.sh --data-dir /path/to/datasets
 ```
 
-### Step 2 — Open SimpleBrowser
+### Step 2 — Open the app in the browser
 
-After confirming both services are running (look for `[OK] Backend is healthy` in terminal output), open the frontend in VS Code's SimpleBrowser using the `open_browser_page` tool:
+After confirming both services are running (look for `[OK] Backend is healthy` in terminal output), or when a running URL was supplied, open the frontend with the integrated browser's `open_browser_page` tool:
 
 ```text
 open_browser_page("http://localhost:5173")
 ```
 
-SimpleBrowser is the primary visual interface for the user. All Playwright automation operates headlessly in the background — the user sees results in SimpleBrowser.
+That page is what the user sees. Use the supplied URL, or substitute a non-default `FRONTEND_PORT` for `5173`.
 
-If a non-default `FRONTEND_PORT` was set, substitute that port instead of `5173`.
+### Step 3 — Load browser automation tools
 
-### Step 3 — Load the Playwright MCP tools
+Drive the UI with whichever browser tool family the host provides:
 
-Playwright runs in **headless mode** so it does not open a separate browser window. All visual feedback goes through SimpleBrowser (Step 2). The Playwright MCP server must be declared in `.vscode/mcp.json` with the `--headless` flag:
+| Tool family        | Tools                                                                                                                        | How it works                                       |
+|--------------------|------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------|
+| Integrated browser | `open_browser_page`, `navigate_page`, `read_page`, `click_element`, `type_in_page`, `run_playwright_code`, `screenshot_page` | Acts on the page the user sees                     |
+| Playwright MCP     | `browser_snapshot`, `browser_navigate`, `browser_click`, `browser_type`, `browser_evaluate`, `browser_take_screenshot`       | Acts headlessly on a separate copy of the same URL |
+
+Search for deferred tools before their first use. The Playwright MCP server must be declared in `.vscode/mcp.json` with the `--headless` flag:
 
 ```json
 // .vscode/mcp.json
@@ -64,31 +71,30 @@ Playwright runs in **headless mode** so it does not open a separate browser wind
 ```
 
 > [!IMPORTANT]
-> The `--headless` flag is required. Without it, Playwright opens a separate Chromium window instead of working invisibly behind SimpleBrowser.
+> The `--headless` flag is required. Without it, Playwright opens a separate Chromium window instead of working behind the page the user sees.
 
-Before issuing any browser actions, always load the Playwright tools with:
+Load the Playwright MCP tools with:
 
 ```text
 tool_search_tool_regex("playwright|browser_snapshot|browser_navigate|browser_click|browser_type")
 ```
 
-If the search returns no results the MCP server has not started. Ask the user to open the VS Code Command Palette and run **MCP: Start Server** → **playwright**, then retry the search.
+If that search returns no results, the MCP server has not started; ask the user to run **MCP: Start Server** → **playwright** from the VS Code Command Palette, or use the integrated browser tools. If neither family is available, open the page and guide the user through the steps.
 
-### Step 4 — Interact via Playwright MCP
+### Step 4 — Interact with the UI
 
-Playwright operates headlessly on the same URL as SimpleBrowser. Both see the same backend state, so API-driven changes (labels, annotations) appear in both.
+Both tool families see the same backend state, so API-driven changes (labels, annotations) appear in both.
 
-Once the tools are available, use the following patterns for all UI interaction:
+| Action             | Integrated browser    | Playwright MCP            | Notes                                        |
+|--------------------|-----------------------|---------------------------|----------------------------------------------|
+| Capture page state | `read_page`           | `browser_snapshot`        | Call first before any click/type to orient   |
+| Navigate to URL    | `navigate_page`       | `browser_navigate`        | Use to reload or go to a route               |
+| Click an element   | `click_element`       | `browser_click`           | Target `aside li button` for episodes        |
+| Type into input    | `type_in_page`        | `browser_type`            | For search or label inputs                   |
+| Run a script       | `run_playwright_code` | `browser_evaluate`        | For sliders, scrolling and multi-step checks |
+| Take a screenshot  | `screenshot_page`     | `browser_take_screenshot` | Use to verify visual state                   |
 
-| Action             | Playwright MCP Tool       | Notes                                      |
-|--------------------|---------------------------|--------------------------------------------|
-| Capture page state | `browser_snapshot`        | Call first before any click/type to orient |
-| Navigate to URL    | `browser_navigate`        | Use to reload or go to a route             |
-| Click an element   | `browser_click`           | Target `aside li button` for episodes      |
-| Type into input    | `browser_type`            | For search or label inputs                 |
-| Take a screenshot  | `browser_take_screenshot` | Use to verify visual state                 |
-
-Always call `browser_snapshot` first to inspect the current DOM before issuing click or type actions. Reference the selector patterns in the [Frontend UI Structure](#frontend-ui-structure) section below.
+Always read the current page state before issuing click or type actions. Reference the selector patterns in the [Frontend UI Structure](#frontend-ui-structure) section below.
 
 ## Quick Start
 
@@ -458,13 +464,15 @@ After applying labels via API, refresh the browser and verify using Playwright:
 For individual episode review or correction:
 
 1. Click an episode in the sidebar (`aside li button` elements).
-2. Scroll to the "Edit Tools" / "Episode Labels" section using `browser_evaluate` with `scrollIntoView`.
+2. Scroll to the "Edit Tools" / "Episode Labels" section with `run_playwright_code` or `browser_evaluate` and `scrollIntoView`.
 3. Toggle label buttons (SUCCESS, FAILURE, PARTIAL, or custom labels) — clicking a selected label removes it.
 4. Click "Save & Next Episode" to persist and continue, or "Save Episode" on the final episode.
 
+The Edit Tools trajectory editor adjusts state channels per frame, labelled with the dataset's own channel names. Those adjustments preview on the trajectory plot only; exports do not apply them.
+
 ## Frontend UI Structure
 
-The React app has these key areas for Playwright interaction:
+The React app has these key areas for browser automation:
 
 | Area             | Selector Pattern                  | Description                                     |
 |------------------|-----------------------------------|-------------------------------------------------|
@@ -486,9 +494,9 @@ The React app has these key areas for Playwright interaction:
 | CORS errors                              | Backend allows localhost ports 5173-5177; check the frontend port is in range                                                                      |
 | Labels not persisted after restart       | Check the PUT response; resolve any HTTP 412 revision conflict, then verify the saved labels with GET                                              |
 | Playwright opens separate Chrome window  | Ensure `--headless` is in the Playwright MCP args in `.vscode/mcp.json`; restart the MCP server after changing                                     |
-| Snapshot refs stale after navigation     | Always take a fresh `browser_snapshot` before clicking; refs change on page updates                                                                |
-| Slider not responding to Playwright      | Use `browser_evaluate` with native input value setter and dispatch `input` + `change` events                                                       |
-| Sidebar not scrolling                    | Scroll the `aside ul` element directly via `browser_evaluate` with `element.scrollTop = N`                                                         |
+| Snapshot refs stale after navigation     | Read the page again with `read_page` or `browser_snapshot` before clicking; refs change on page updates                                            |
+| Slider not responding to automation      | Use `run_playwright_code` or `browser_evaluate` with native input value setter and dispatch `input` + `change` events                              |
+| Sidebar not scrolling                    | Scroll the `aside ul` element directly via `run_playwright_code` or `browser_evaluate` with `element.scrollTop = N`                                |
 
 ## VLM-as-Judge Workflow
 
@@ -529,9 +537,9 @@ VLM_JUDGE_CACHE_DIR=outputs/vlm-judge/cache
 4. Click **Run judge** → outcome badge, progress sparkline, VOC, optional milestones + failure mode appear. The result also lands on disk under `VLM_JUDGE_CACHE_DIR`.
 5. Re-visiting the same episode shows a `cached` badge. Click **Force fresh** to bypass the cache and re-run.
 
-### Playwright UI verification
+### Browser UI verification
 
-Use the same MCP tooling as the rest of the skill, but route through the new panel selectors. After a `browser_snapshot`, click using element refs from the snapshot. As a JS-fallback when the snapshot lacks button refs:
+Use the same browser tooling as the rest of the skill, but route through the new panel selectors. After reading the page with `read_page` or `browser_snapshot`, click using its element refs. As a script fallback when the page state lacks button refs, run this body with `run_playwright_code` or `browser_evaluate`:
 
 ```javascript
 browser_evaluate: () => {
@@ -545,7 +553,7 @@ browser_evaluate: () => {
 }
 ```
 
-To assert the result rendered, wait for the outcome badge text:
+To assert the result rendered, wait for the outcome badge text, here with Playwright MCP (with the integrated browser, wait for the same text in `run_playwright_code`):
 
 ```text
 browser_wait_for(text="SUCCESS")  # or "FAILURE", "Inconclusive"
