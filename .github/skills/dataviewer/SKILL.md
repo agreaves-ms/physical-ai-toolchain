@@ -475,6 +475,9 @@ Velocities, actions and the other exported arrays stay as recorded.
 LeRobot v3.0 sources, including sim captures, export to a new LeRobot v3.0 dataset at the output path. That path must be new or empty and outside the source.
 The export keeps `observation.state` and every other recorded feature, and adds adjustments as `adjusted.observation.state` with `adjusted.observation.state_mask`. The `adjusted.` prefix keeps both out of LeRobot policy inputs.
 Removing or inserting frames renumbers `frame_index` and `timestamp`. `dataviewer-export.json` maps every output frame to its source frame and records the edits and remapped subtasks.
+Subtasks shrink to the frames that survive the edits, and a LeRobot export also writes each one as a LeRobot `subtask` row in `language_persistent`, starting at its first output frame.
+LeRobot keeps a subtask active until the next one starts, so frames between two subtasks read as the earlier one; `dataviewer-export.json` keeps the exact ranges.
+Recorded language annotations move with the edited frames, and exported subtasks replace their `subtask` rows. Clearing **Include subtasks as LeRobot subtask annotations** in the export dialog leaves these columns out.
 Each export is a separate dataset. LeRobot merges datasets only when their features match, so a cropped or adjusted export won't merge with an unedited one.
 
 ## Frontend UI Structure
