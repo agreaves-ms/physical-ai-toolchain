@@ -468,7 +468,9 @@ For individual episode review or correction:
 3. Toggle label buttons (SUCCESS, FAILURE, PARTIAL, or custom labels) — clicking a selected label removes it.
 4. Click "Save & Next Episode" to persist and continue, or "Save Episode" on the final episode.
 
-The Edit Tools trajectory editor adjusts state channels per frame, labelled with the dataset's own channel names. Those adjustments preview on the trajectory plot only; exports do not apply them.
+The Edit Tools trajectory editor adjusts state channels per frame, labelled with the dataset's own channel names, and the trajectory plot previews each adjustment.
+HDF5 exports keep the recorded joint positions as `data/qpos` and add the adjustments beside them as `data/qpos_adjusted`, with `data/qpos_adjusted_mask` marking the edited rows and the adjustment list in the episode's `.meta.json`.
+Velocities, actions and the other exported arrays stay as recorded.
 
 ## Frontend UI Structure
 
