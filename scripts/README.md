@@ -2,7 +2,7 @@
 title: Scripts
 description: CI/CD scripts, shared libraries, linting, security, and Pester tests for the Physical AI Toolchain.
 author: Microsoft Robotics-AI Team
-ms.date: 2026-09-28
+ms.date: 2026-10-01
 ms.topic: reference
 keywords:
   - scripts
@@ -67,6 +67,7 @@ PowerShell scripts for validating code quality and documentation.
 | `Invoke-LinkLanguageCheck.ps1`      | Detect en-us language paths in URLs         |
 | `Link-Lang-Check.ps1`               | Link language checking entry point          |
 | `Markdown-Link-Check.ps1`           | Validate markdown links                     |
+| `Format-MarkdownTables.ps1`         | Format or check Markdown tables             |
 | `Invoke-YamlLint.ps1`               | YAML file validation                        |
 | `Invoke-TFLint.ps1`                 | Terraform linting                           |
 | `Invoke-TerraformValidation.ps1`    | Terraform format and validate               |
