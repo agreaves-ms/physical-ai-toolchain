@@ -2,7 +2,8 @@
  * Trajectory editor for adjusting the state vector at each frame.
  *
  * Each state channel takes an additive delta or a set value. Adjustments are stored
- * non-destructively in the edit store and preview on the trajectory plot; exports do not apply them.
+ * non-destructively in the edit store and preview on the trajectory plot. HDF5 exports keep the
+ * recorded qpos and add them as qpos_adjusted with a mask of the edited rows.
  */
 
 import { Check, RotateCcw, Trash2 } from 'lucide-react'
