@@ -2,7 +2,7 @@ import { waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { clearPersistedEditDraftsForTests } from '@/lib/edit-draft-storage'
-import type { FrameInsertion } from '@/types/episode-edit'
+import type { FrameInsertion, TrajectoryAdjustment } from '@/types/episode-edit'
 
 import {
   getEffectiveFrameCount,
@@ -339,7 +339,7 @@ describe('useEditStore', () => {
       useEditStore.getState().addSubtaskFromRange(10, 50)
       useEditStore.getState().insertFrame(3)
       useEditStore.getState().setTrajectoryAdjustment(7, {
-        rightArmDelta: [0.1, 0, 0],
+        channelDeltas: { 0: 0.1 },
       })
 
       expect(useEditStore.getState().isDirty).toBe(true)
@@ -356,6 +356,21 @@ describe('useEditStore', () => {
       expect(useEditStore.getState().insertedFrames.size).toBe(0)
       expect(useEditStore.getState().removedFrames.size).toBe(0)
       expect(useEditStore.getState().trajectoryAdjustments.size).toBe(0)
+    })
+
+    it('drops trajectory adjustments without per-channel fields when edits are loaded', () => {
+      const legacy = {
+        frameIndex: 0,
+        rightArmDelta: [0.1, 0, 0],
+      } as unknown as TrajectoryAdjustment
+
+      useEditStore.getState().loadEditOperations({
+        datasetId: 'ds-1',
+        episodeIndex: 0,
+        trajectoryAdjustments: [legacy, { frameIndex: 1, channelDeltas: { 0: 0.2 } }],
+      })
+
+      expect([...useEditStore.getState().trajectoryAdjustments.keys()]).toEqual([1])
     })
   })
 

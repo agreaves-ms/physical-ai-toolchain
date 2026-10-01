@@ -74,18 +74,14 @@ export interface FrameInsertion {
 // Episode Edit Operations
 // ============================================================================
 
-/** XYZ position adjustment for a single frame */
+/** Per-channel adjustment of the state vector at one frame; it changes the plot preview, not exported data */
 export interface TrajectoryAdjustment {
   /** Frame index this adjustment applies to */
   frameIndex: number
-  /** Delta adjustments for right arm XYZ (indices 0, 1, 2) */
-  rightArmDelta?: [number, number, number]
-  /** Delta adjustments for left arm XYZ (indices 8, 9, 10) */
-  leftArmDelta?: [number, number, number]
-  /** Override for right gripper value (index 7) */
-  rightGripperOverride?: number
-  /** Override for left gripper value (index 15) */
-  leftGripperOverride?: number
+  /** Additive deltas keyed by state channel index */
+  channelDeltas?: Record<number, number>
+  /** Absolute values keyed by state channel index; a value replaces the channel's delta */
+  channelValues?: Record<number, number>
 }
 
 /** Complete set of edit operations for an episode */

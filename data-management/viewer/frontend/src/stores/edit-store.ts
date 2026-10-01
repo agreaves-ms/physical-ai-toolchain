@@ -302,6 +302,8 @@ export const useEditStore = create<EditStore>()(
           const subtasks = ops.subtasks ?? []
           const trajectoryAdjustments = new Map<number, TrajectoryAdjustment>()
           for (const adj of ops.trajectoryAdjustments ?? []) {
+            // Drafts saved before per-channel adjustments carry neither field; they are preview-only, so drop them.
+            if (adj.channelDeltas === undefined && adj.channelValues === undefined) continue
             trajectoryAdjustments.set(adj.frameIndex, adj)
           }
 
