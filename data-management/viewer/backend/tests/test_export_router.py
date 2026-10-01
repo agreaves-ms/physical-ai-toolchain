@@ -44,6 +44,7 @@ def mock_service(dataset_layout: tuple[Path, Path, Path]):
     svc.base_path = str(base)
     svc.get_dataset = AsyncMock(return_value=MagicMock(name="dataset"))
     svc._get_dataset_path = MagicMock(return_value=dataset_dir)
+    svc.dataset_is_lerobot = MagicMock(return_value=False)
     svc.get_episode = AsyncMock()
     return svc
 
@@ -72,6 +73,16 @@ def _make_export_result(success: bool = True, error: str | None = None) -> Magic
 
 def _patch_exporter(monkeypatch: pytest.MonkeyPatch, exporter_mock: MagicMock) -> None:
     monkeypatch.setattr("src.api.routers.export.HDF5Exporter", exporter_mock)
+
+
+def _patch_lerobot_exporter(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMock]:
+    instance = MagicMock()
+    instance.export_episodes.return_value = _make_export_result()
+    cls = MagicMock(return_value=instance)
+    monkeypatch.setattr("src.api.routers.export.LeRobotExporter", cls)
+    hdf5 = MagicMock(side_effect=AssertionError("HDF5Exporter must not handle LeRobot sources"))
+    monkeypatch.setattr("src.api.routers.export.HDF5Exporter", hdf5)
+    return cls, instance
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +318,83 @@ class TestExportEpisodes:
 # ---------------------------------------------------------------------------
 # POST /api/datasets/{dataset_id}/export/stream
 # ---------------------------------------------------------------------------
+
+
+class TestLeRobotExports:
+    def test_lerobot_sources_use_the_lerobot_exporter_without_creating_the_output(
+        self, client: TestClient, override_service, dataset_layout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base, dataset_dir, _output = dataset_layout
+        override_service.dataset_is_lerobot.return_value = True
+        cls, instance = _patch_lerobot_exporter(monkeypatch)
+        output = base / "ds-1-edited"
+
+        resp = client.post("/api/datasets/ds-1/export", json={"episodeIndices": [0], "outputPath": str(output)})
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["success"] is True
+        cls.assert_called_once_with(dataset_dir, output, dataset_id="ds-1")
+        assert instance.export_episodes.call_args.kwargs["episode_indices"] == [0]
+        assert not output.exists()
+
+    def test_lerobot_export_refuses_a_non_empty_output(
+        self, client: TestClient, override_service, dataset_layout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _base, _dataset, output_dir = dataset_layout
+        override_service.dataset_is_lerobot.return_value = True
+        cls, _instance = _patch_lerobot_exporter(monkeypatch)
+        (output_dir / "existing.txt").write_text("keep")
+
+        resp = client.post("/api/datasets/ds-1/export", json={"episodeIndices": [0], "outputPath": str(output_dir)})
+
+        assert resp.status_code == 400
+        assert "new or empty" in resp.json()["detail"]
+        cls.assert_not_called()
+
+    @pytest.mark.parametrize("relation", ["inside", "containing"])
+    def test_lerobot_export_refuses_paths_nested_with_the_source(
+        self, client: TestClient, override_service, dataset_layout, monkeypatch: pytest.MonkeyPatch, relation: str
+    ) -> None:
+        base, _dataset, _output = dataset_layout
+        nested = base / "group" / "ds-1"
+        nested.mkdir(parents=True)
+        override_service._get_dataset_path.return_value = nested
+        override_service.dataset_is_lerobot.return_value = True
+        cls, _instance = _patch_lerobot_exporter(monkeypatch)
+        output = nested / "derived" if relation == "inside" else base / "group"
+        before = sorted(path.relative_to(base).as_posix() for path in base.rglob("*"))
+
+        resp = client.post("/api/datasets/ds-1/export", json={"episodeIndices": [0], "outputPath": str(output)})
+
+        assert resp.status_code == 400
+        assert "outside the source dataset" in resp.json()["detail"]
+        assert sorted(path.relative_to(base).as_posix() for path in base.rglob("*")) == before
+        cls.assert_not_called()
+
+    def test_stream_guards_then_dispatches_lerobot_sources(
+        self, client: TestClient, override_service, dataset_layout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base, dataset_dir, _output = dataset_layout
+        override_service.dataset_is_lerobot.return_value = True
+        cls, _instance = _patch_lerobot_exporter(monkeypatch)
+
+        rejected = client.post(
+            "/api/datasets/ds-1/export/stream", json={"episodeIndices": [0], "outputPath": str(dataset_dir / "x")}
+        )
+        assert rejected.status_code == 400
+        assert not (dataset_dir / "x").exists()
+        cls.assert_not_called()
+
+        with client.stream(
+            "POST",
+            "/api/datasets/ds-1/export/stream",
+            json={"episodeIndices": [0], "outputPath": str(base / "ds-1-edited")},
+        ) as resp:
+            assert resp.status_code == 200
+            body = "".join(resp.iter_text())
+
+        assert "event: complete" in body
+        cls.assert_called_once_with(dataset_dir, base / "ds-1-edited", dataset_id="ds-1")
 
 
 class TestExportEpisodesStream:

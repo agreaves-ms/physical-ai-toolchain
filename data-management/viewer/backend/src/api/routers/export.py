@@ -1,8 +1,8 @@
 """
 Export API endpoints for episode data with edit operations.
 
-Provides endpoints for exporting episodes to HDF5 files with
-frame editing, removal, and sub-task annotations applied.
+Exports HDF5 sources to new HDF5 files and LeRobot v3.0 sources to a new
+LeRobot v3.0 dataset, with frame editing, removal, and sub-task annotations applied.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from ..services.episode_edits import (
     parse_edit_operations,
 )
 from ..services.hdf5_exporter import HDF5Exporter
+from ..services.lerobot_exporter import LeRobotExporter
 from ..validation import (
     SAFE_DATASET_ID_PATTERN,
     SanitizedModel,
@@ -144,6 +145,40 @@ class ExportResultResponse(BaseModel):
     stats: dict[str, Any] = Field(default_factory=dict)
 
 
+def _prepare_output(service: DatasetService, dataset_id: str, dataset_path: Path, output_path: Path) -> bool:
+    """Validate the output path for the source's format and return whether the source is a LeRobot dataset.
+
+    A LeRobot export writes a new dataset, so its path must be new or empty and must neither sit inside
+    nor contain the source. These checks run before anything is created; an HDF5 export creates its directory.
+    """
+    if service.dataset_is_lerobot(dataset_id):
+        if output_path.is_relative_to(dataset_path) or dataset_path.is_relative_to(output_path):
+            raise HTTPException(
+                status_code=400,
+                detail="Output path must be outside the source dataset and must not contain it",
+            )
+        if output_path.exists() and (not output_path.is_dir() or any(output_path.iterdir())):
+            raise HTTPException(
+                status_code=400,
+                detail="Output path must be a new or empty directory for a LeRobot export",
+            )
+        return True
+    try:
+        output_path.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid output path: {e}",
+        )
+    return False
+
+
+def _exporter(lerobot: bool, dataset_id: str, dataset_path: Path, output_path: Path) -> HDF5Exporter | LeRobotExporter:
+    if lerobot:
+        return LeRobotExporter(dataset_path, output_path, dataset_id=dataset_id)
+    return HDF5Exporter(dataset_path, output_path)
+
+
 def _public_export_result(result: ExportResult) -> ExportResultResponse:
     if not result.success:
         logger.error("Export failed: %s", result.error)
@@ -166,9 +201,10 @@ async def export_episodes(
     service: DatasetService = Depends(get_dataset_service),
 ) -> ExportResultResponse:
     """
-    Export episodes to new HDF5 files with edit operations applied.
+    Export episodes with edit operations applied.
 
-    Creates new HDF5 files in the specified output directory with:
+    LeRobot v3.0 sources produce a new LeRobot dataset at the output path. HDF5 sources
+    produce new HDF5 files in the specified output directory with:
     - Frame removal applied (excluded frames are not written)
     - Image transforms applied (crop/resize)
     - Metadata JSON file with edit history
@@ -213,16 +249,10 @@ async def export_episodes(
             detail="Path traversal detected: resolved path escapes base directory",
         )
     output_path = Path(output_path_str)
-    try:
-        output_path.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid output path: {e}",
-        )
+    lerobot = _prepare_output(service, dataset_id, dataset_path, output_path)
 
     try:
-        exporter = HDF5Exporter(dataset_path, output_path)
+        exporter = _exporter(lerobot, dataset_id, dataset_path, output_path)
 
         # Parse edit operations
         edits_map: dict[int, EpisodeEditOperations] | None = None
@@ -308,17 +338,11 @@ async def export_episodes_stream(
             detail="Path traversal detected: resolved path escapes base directory",
         )
     output_path = Path(output_path_str)
-    try:
-        output_path.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid output path: {e}",
-        )
+    lerobot = _prepare_output(service, dataset_id, dataset_path, output_path)
 
     async def event_generator():
         try:
-            exporter = HDF5Exporter(dataset_path, output_path)
+            exporter = _exporter(lerobot, dataset_id, dataset_path, output_path)
 
             # Parse edit operations
             edits_map: dict[int, EpisodeEditOperations] | None = None
