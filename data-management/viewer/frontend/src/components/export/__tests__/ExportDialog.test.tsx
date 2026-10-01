@@ -150,6 +150,30 @@ describe('ExportDialog', () => {
     )
 
     expect(screen.getByText(/to HDF5 episode files/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/include subtask metadata/i)).toBeInTheDocument()
+  })
+
+  it('says a LeRobot export writes subtasks as LeRobot subtask annotations', async () => {
+    mockCapabilities(true)
+    const user = userEvent.setup()
+    const startExport = vi.fn()
+    vi.mocked(useExport).mockReturnValue(createUseExportReturn({ startExport }))
+    editState.getEditOperations = vi.fn(() => ({
+      datasetId: 'dataset-1',
+      episodeIndex: 0,
+      subtasks: [
+        { id: 's1', label: 'grasp', frameRange: [0, 9], color: '#ff0000', source: 'manual' },
+      ],
+    }))
+
+    renderWithQuery(
+      <ExportDialog open onOpenChange={vi.fn()} datasetId="dataset-1" episodeIndices={[0]} />,
+    )
+    expect(screen.queryByLabelText(/include subtask metadata/i)).toBeNull()
+    await user.click(screen.getByLabelText(/include subtasks as LeRobot subtask annotations/i))
+    await user.click(screen.getByRole('button', { name: /start export/i }))
+
+    expect(startExport.mock.calls[0][0].edits[0].subtasks).toBeUndefined()
   })
 
   it('leaves subtasks out of the request when subtask metadata is unchecked', async () => {

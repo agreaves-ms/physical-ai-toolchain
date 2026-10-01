@@ -135,7 +135,11 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
                 checked={includeSubtasks}
                 onCheckedChange={(checked) => setIncludeSubtasks(checked === true)}
               />
-              <Label htmlFor="include-subtasks">Include subtask metadata</Label>
+              <Label htmlFor="include-subtasks">
+                {capabilities?.isLerobotDataset
+                  ? 'Include subtasks as LeRobot subtask annotations'
+                  : 'Include subtask metadata'}
+              </Label>
             </div>
 
             <div className="text-muted-foreground space-y-1 text-sm">
