@@ -2,7 +2,7 @@
 title: Dataset Analysis Tool
 description: Run and configure the web application for analyzing and annotating episode-based robotics datasets
 author: Microsoft
-ms.date: 2026-09-23
+ms.date: 2026-10-01
 ms.topic: overview
 ---
 
@@ -604,9 +604,18 @@ A LeRobot export:
 
 - keeps every recorded feature;
 - re-encodes the videos with the source's recorded encoder settings, falling back to LeRobot's defaults for any setting the source doesn't record;
-- recomputes the per-episode and dataset statistics.
+- recomputes the per-episode and dataset statistics;
+- writes subtasks as LeRobot `subtask` annotations.
 
 Removing or inserting frames renumbers `frame_index` and sets `timestamp` to `frame_index / fps`. `dataviewer-export.json` maps each output frame to its source frame and records the edits and remapped subtasks.
+
+A subtask that loses its first or last frames to the edits shrinks to the frames that remain, and one with no frames left is dropped.
+
+In a LeRobot export, each subtask becomes a row in the `language_persistent` column, with the subtask label as its text and its first frame's `timestamp`. LeRobot treats a subtask as active until the next one starts, so frames in a gap between two subtasks read as the earlier subtask; `dataviewer-export.json` keeps the exact ranges.
+
+The label becomes the annotation text, so name subtasks the way training should read them. Clear **Include subtasks as LeRobot subtask annotations** to export without these columns.
+
+When the source already has LeRobot language annotations, the export moves them with the edited frames. Exported subtasks replace the source's `subtask` rows, and other rows, such as plans, keep their recorded text.
 
 Trajectory adjustments never replace recorded joint positions:
 
