@@ -254,6 +254,7 @@ def test_removed_frames_renumber_the_timeline_and_leave_the_source_unchanged(sou
         assert abs(float(image.mean()) - _gray(0, frame)) < 4
     info = _info(output)
     assert (info["total_episodes"], info["total_frames"], info["splits"]) == (1, 10, {"train": "0:1"})
+    assert not {"language_persistent", "language_events"} & (set(data.column_names) | set(info["features"]))
     provenance = json.loads((output / PROVENANCE_FILE).read_text())
     assert provenance["source"] == {"dataset_id": "capture--lerobot", "codebase_version": "v3.0", "fps": FPS}
     assert provenance["episodes"][0]["frame_sources"] == kept
@@ -437,6 +438,62 @@ def test_source_language_rows_collapsed_by_removals_keep_the_latest(source: Path
         ("task_aug", "pick the part", 0.0),
         ("task_aug", "grab the part", 0.0),
         ("subtask", "grasp", float(np.float32(0.1))),
+    ]
+
+
+def _subtask(label: str, frames: tuple[int, int]) -> SubtaskSegment:
+    return SubtaskSegment(id=label.lower(), label=label, frame_range=frames, color="#ff0000", source="manual")
+
+
+def test_subtasks_are_written_as_lerobot_subtask_rows(source: Path) -> None:
+    subtasks = [_subtask("Reach", (0, 4)), _subtask("Grasp", (5, 11))]
+
+    output = _export(source, [0, 1], _edits(0, removed_frames={0, 1}, subtasks=subtasks))
+
+    frames = _language(output, 0)
+    assert [_summary(persistent) for persistent, _ in frames] == [
+        [("subtask", "Reach", 0.0), ("subtask", "Grasp", float(np.float32(0.3)))]
+    ] * 10
+    assert frames[0][0][0] | {"timestamp": 0.0} == _row("subtask", "Reach", 0.0)
+    assert all(events == [] for _, events in frames)
+    assert _language(output, 1) == [([], [])] * LENGTHS[1]
+    language = {"dtype": "language", "shape": [1], "names": None}
+    features = _info(output)["features"]
+    assert (features["language_persistent"], features["language_events"]) == (language, language)
+    assert not any("language" in key for key in json.loads((output / "meta/stats.json").read_text()))
+    assert not any("language" in key for row in _episodes(output) for key in row)
+
+
+def test_subtasks_sharing_an_output_start_write_one_row(source: Path) -> None:
+    subtasks = [_subtask("Reach", (0, 3)), _subtask("Grasp", (2, 6)), _subtask("Lift", (7, 11))]
+
+    output = _export(source, [0], _edits(0, removed_frames={0, 1, 2}, subtasks=subtasks))
+
+    persistent, _ = _language(output, 0)[0]
+    assert _summary(persistent) == [("subtask", "Grasp", 0.0), ("subtask", "Lift", float(np.float32(0.4)))]
+
+
+def test_subtasks_replace_source_subtask_rows_and_keep_other_styles(source: Path) -> None:
+    _add_language(
+        source,
+        {
+            0: [
+                _row("plan", "reach then grasp", 0.0),
+                _row("subtask", "old reach", 0.0),
+                _row("subtask", "old grasp", 0.5),
+            ]
+        },
+        {},
+    )
+    subtasks = [_subtask("Reach", (0, 4)), _subtask("Grasp", (5, 11))]
+
+    output = _export(source, [0], _edits(0, removed_frames={1}, subtasks=subtasks))
+
+    persistent, _ = _language(output, 0)[0]
+    assert _summary(persistent) == [
+        ("plan", "reach then grasp", 0.0),
+        ("subtask", "Reach", 0.0),
+        ("subtask", "Grasp", float(np.float32(0.4))),
     ]
 
 

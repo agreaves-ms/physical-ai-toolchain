@@ -5,7 +5,8 @@ The source dataset is never modified. Recorded features are copied unchanged, an
 adjustments become the derived ``adjusted.observation.state`` and ``adjusted.observation.state_mask``
 features. Removing or inserting frames renumbers the timeline so every timestamp stays
 ``frame_index / fps``, and LeRobot language annotation rows move with it; ``dataviewer-export.json``
-records which source frame each output frame came from, the applied edits and the remapped subtasks.
+records which source frame each output frame came from, the applied edits and the remapped subtasks,
+which are also written as LeRobot ``subtask`` language rows.
 Videos are decoded and re-encoded with the source's recorded encoder settings, and per-episode and
 dataset statistics are recomputed.
 """
@@ -46,7 +47,15 @@ from .episode_edits import (
 )
 from .frame_interpolation import interpolate_image
 from .image_transform import ImageTransform, ImageTransformError, apply_transform, get_output_dimensions
-from .lerobot_language import LANGUAGE_COLUMNS, LANGUAGE_EVENTS, LANGUAGE_PERSISTENT, plan_events, plan_persistent_rows
+from .lerobot_language import (
+    LANGUAGE_COLUMNS,
+    LANGUAGE_EVENTS,
+    LANGUAGE_FEATURE,
+    LANGUAGE_PERSISTENT,
+    episode_persistent_rows,
+    plan_events,
+    subtask_rows,
+)
 from .lerobot_loader import LeRobotDatasetInfo, LeRobotLoader, LeRobotLoaderError
 
 STATE_FEATURE = "observation.state"
@@ -289,6 +298,13 @@ def _timestamps(table: pa.Table, fps: float) -> list[float]:
     return [index / fps for index in range(table.num_rows)]
 
 
+def _recorded_language(source: pa.Table, recorded: set[str]) -> tuple[list[dict[str, Any]], list[Any]]:
+    """Return a source episode's persistent rows and per-frame events, empty where it records none."""
+    rows = (source.column(LANGUAGE_PERSISTENT)[0].as_py() or []) if LANGUAGE_PERSISTENT in recorded else []
+    events = source.column(LANGUAGE_EVENTS).to_pylist() if LANGUAGE_EVENTS in recorded else [None] * source.num_rows
+    return rows, events
+
+
 def _transform_record(transform: ImageTransform | None) -> dict[str, Any] | None:
     if transform is None:
         return None
@@ -446,14 +462,15 @@ class LeRobotExporter:
         tables = [self._episode_table(info, episode, adjusted) for episode in episodes]
         encoders = self._write_videos(root, info, episodes, sizes, progress_callback)
 
+        language = self._language_columns(info, episodes, tables)
         data = pa.concat_tables(tables)
-        for name, column in self._language_columns(info, episodes, tables).items():
+        for name, column in language.items():
             data = data.append_column(name, column)
         data_path = _inside(root, DATA_PATH.format(chunk_index=0, file_index=0))
         data_path.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(data, data_path)
 
-        features = self._features(info, sizes, encoders, adjusted)
+        features = self._features(info, sizes, encoders, adjusted, list(language))
         stats_features = [
             name
             for name, feature in features.items()
@@ -523,21 +540,22 @@ class LeRobotExporter:
     def _language_columns(
         info: LeRobotDatasetInfo, episodes: list[_Episode], tables: list[pa.Table]
     ) -> dict[str, pa.Array]:
-        """Return the source's language columns planned onto the output frames, or none when it has none."""
-        present = [name for name in LANGUAGE_COLUMNS if all(name in episode.table.column_names for episode in episodes)]
-        values = {name: [] for name in present}
+        """Return language columns on the output frames: the source's rows moved with the edits, plus subtasks."""
+        recorded = {name for name in LANGUAGE_COLUMNS if all(name in e.table.column_names for e in episodes)}
+        written, persistent, events = set(recorded), [], []
         for episode, table in zip(episodes, tables, strict=True):
-            source = episode.table
-            if LANGUAGE_PERSISTENT in values:
-                rows = source.column(LANGUAGE_PERSISTENT)[0].as_py() or []
-                planned = plan_persistent_rows(
-                    rows, _timestamps(source, info.fps), episode.plan, _timestamps(table, info.fps)
-                )
-                values[LANGUAGE_PERSISTENT].extend([planned] * episode.length)
-            if LANGUAGE_EVENTS in values:
-                values[LANGUAGE_EVENTS].extend(plan_events(source.column(LANGUAGE_EVENTS).to_pylist(), episode.plan))
+            output_times = _timestamps(table, info.fps)
+            subtasks = subtask_rows((episode.edits.subtasks or []) if episode.edits else [], episode.plan, output_times)
+            if subtasks:
+                written.update(LANGUAGE_COLUMNS)
+            rows, frame_events = _recorded_language(episode.table, recorded)
+            source_times = _timestamps(episode.table, info.fps)
+            planned = episode_persistent_rows(rows, subtasks, source_times, episode.plan, output_times)
+            persistent.extend([planned] * episode.length)
+            events.extend(plan_events(frame_events, episode.plan))
+        columns = {LANGUAGE_PERSISTENT: persistent, LANGUAGE_EVENTS: events}
         # Types are inferred from the rows, as lerobot's writer does; its JSON element type can't be built from Python.
-        return {name: pa.array(rows) for name, rows in values.items()}
+        return {name: pa.array(columns[name]) for name in LANGUAGE_COLUMNS if name in written}
 
     def _write_videos(
         self,
@@ -613,6 +631,7 @@ class LeRobotExporter:
         sizes: dict[str, tuple[int, int]],
         encoders: dict[str, dict[str, Any]],
         adjusted: bool,
+        language: list[str],
     ) -> dict[str, dict[str, Any]]:
         features = copy.deepcopy(info.features)
         for camera, (width, height) in sizes.items():
@@ -626,6 +645,8 @@ class LeRobotExporter:
             state = features[STATE_FEATURE]
             features[ADJUSTED_STATE] = {"dtype": state["dtype"], "shape": state["shape"], "names": state.get("names")}
             features[ADJUSTED_STATE_MASK] = {"dtype": "bool", "shape": [1], "names": None}
+        for name in language:
+            features.setdefault(name, copy.deepcopy(LANGUAGE_FEATURE))
         return features
 
     @staticmethod

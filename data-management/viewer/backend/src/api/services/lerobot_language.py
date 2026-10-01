@@ -11,11 +11,13 @@ from __future__ import annotations
 from bisect import bisect_left
 from typing import Any
 
-from .episode_edits import PlannedFrame, output_indices
+from .episode_edits import PlannedFrame, SubtaskSegment, output_indices, remap_subtasks
 
 LANGUAGE_PERSISTENT = "language_persistent"
 LANGUAGE_EVENTS = "language_events"
 LANGUAGE_COLUMNS = (LANGUAGE_PERSISTENT, LANGUAGE_EVENTS)
+LANGUAGE_FEATURE = {"dtype": "language", "shape": [1], "names": None}
+SUBTASK_STYLE = "subtask"
 
 _TIMESTAMP_TOLERANCE_S = 1e-4
 """Matches LeRobot's frame-timestamp tolerance, so float32 rounding can't push a row onto the next frame."""
@@ -63,3 +65,44 @@ def plan_persistent_rows(
 def plan_events(events_by_frame: list[list[LanguageRow] | None], plan: list[PlannedFrame]) -> list[list[LanguageRow]]:
     """Keep each kept frame's events and give inserted frames none, so no event fires twice."""
     return [(events_by_frame[frame.source] or []) if frame.following is None else [] for frame in plan]
+
+
+def subtask_rows(
+    subtasks: list[SubtaskSegment], plan: list[PlannedFrame], output_timestamps: list[float]
+) -> list[LanguageRow]:
+    """
+    Return one LeRobot ``subtask`` row per exported subtask, starting on its first output frame.
+
+    LeRobot can't choose between two rows of one style at one time, so when subtasks share an output
+    start, the one that starts later in the source wins, then the later one in the request.
+    """
+    positions = output_indices(plan)
+    labels = {}
+    for subtask in sorted(subtasks, key=lambda segment: segment.frame_range[0]):
+        remapped = remap_subtasks([subtask], positions)
+        if remapped:
+            labels[remapped[0]["frame_range"][0]] = subtask.label
+    return [
+        {
+            "role": "assistant",
+            "content": label,
+            "style": SUBTASK_STYLE,
+            "timestamp": output_timestamps[start],
+            "camera": None,
+            "tool_calls": None,
+        }
+        for start, label in sorted(labels.items())
+    ]
+
+
+def episode_persistent_rows(
+    recorded: list[LanguageRow],
+    subtasks: list[LanguageRow],
+    source_timestamps: list[float],
+    plan: list[PlannedFrame],
+    output_timestamps: list[float],
+) -> list[LanguageRow]:
+    """Return an episode's persistent rows on the output frames, with exported subtasks replacing recorded ones."""
+    if subtasks:
+        recorded = [row for row in recorded if row.get("style") != SUBTASK_STYLE]
+    return sorted(plan_persistent_rows(recorded, source_timestamps, plan, output_timestamps) + subtasks, key=_sort_key)
