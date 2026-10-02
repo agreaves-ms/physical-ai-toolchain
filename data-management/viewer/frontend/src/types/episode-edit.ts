@@ -5,6 +5,8 @@
  * frame removal, and sub-task segmentation.
  */
 
+import type { RecordedSubtask } from './api'
+
 // ============================================================================
 // Image Transform Types
 // ============================================================================
@@ -109,7 +111,7 @@ export interface EpisodeEditOperations {
 // ============================================================================
 
 /** Source of a sub-task segment */
-export type SubtaskSource = 'manual' | 'auto'
+export type SubtaskSource = 'manual' | 'auto' | 'recorded'
 
 /** Color presets for sub-task visualization */
 export const SUBTASK_COLORS = [
@@ -206,6 +208,18 @@ export function createDefaultSubtask(
     color: getNextSubtaskColor(existingSegments),
     source: 'manual',
   }
+}
+
+/** Turn an episode's recorded subtasks into editor segments, coloring any without a color in list order */
+export function recordedSubtaskSegments(recorded: readonly RecordedSubtask[]): SubtaskSegment[] {
+  return recorded.map((subtask, index) => ({
+    id: subtask.id,
+    label: subtask.label,
+    frameRange: [subtask.frameRange[0], subtask.frameRange[1]],
+    color: subtask.color ?? SUBTASK_COLORS[index % SUBTASK_COLORS.length],
+    source: subtask.source === 'manual' || subtask.source === 'auto' ? subtask.source : 'recorded',
+    ...(subtask.description ? { description: subtask.description } : {}),
+  }))
 }
 
 /** Check if two frame ranges overlap */
