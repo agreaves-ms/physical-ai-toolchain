@@ -744,7 +744,9 @@ class LeRobotExporter:
                             }
                             for adjustment in ((edits.trajectory_adjustments or []) if edits else [])
                         ],
-                        "subtasks": remap_subtasks(edits.subtasks or [], output_indices(episode.plan)) if edits else [],
+                        "subtasks": remap_subtasks(edits.subtasks, output_indices(episode.plan))
+                        if edits and edits.subtasks is not None
+                        else None,
                     },
                     "language_instruction": {
                         "annotator_id": episode.language.annotator_id,

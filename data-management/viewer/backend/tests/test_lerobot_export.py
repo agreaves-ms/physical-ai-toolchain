@@ -513,6 +513,9 @@ def test_an_empty_subtask_list_removes_recorded_subtask_rows(source: Path) -> No
     assert kept.success, kept.error
     kept_rows = _language(source.parents[1] / "kept", 0)[0][0]
     assert _summary(kept_rows) == [("plan", "reach then grasp", 0.0), ("subtask", "old reach", 0.0)]
+    assert json.loads((removed / PROVENANCE_FILE).read_text())["episodes"][0]["edits"]["subtasks"] == []
+    kept_provenance = json.loads((source.parents[1] / "kept" / PROVENANCE_FILE).read_text())
+    assert kept_provenance["episodes"][0]["edits"]["subtasks"] is None
 
 
 def test_language_instructions_become_task_phrasings_and_a_plan(source: Path) -> None:
