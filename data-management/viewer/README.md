@@ -23,6 +23,12 @@ A full-stack application for analyzing and annotating robotic training data from
 | Node.js | 24+                    |
 | npm     | Bundled with Node.js   |
 | uv      | Current stable release |
+| ffmpeg  | Current stable release |
+
+The backend container image installs `ffmpeg`. When you run the backend outside it, put `ffmpeg` on `PATH`:
+
+- HDF5 datasets need it, or OpenCV, to stream camera images as video. Without either, their camera video is unavailable.
+- LeRobot datasets play without it, but each episode then loads its camera's whole video file instead of the episode's clip.
 
 ## 📦 Installation
 
@@ -602,7 +608,7 @@ Supported fields include object, pickup location, grasp outcome, place outcome, 
 | LeRobot v3.0  | A new LeRobot v3.0 dataset at the output path, which must be new or empty and outside the source dataset |
 | HDF5          | `episode_<index>.hdf5` files in the output directory, with `.meta.json` and `.subtasks.json` beside them |
 
-An existing empty output directory, such as a mounted volume, is kept, and a LeRobot export appears in it only once it completes.
+An existing empty output directory, such as a mounted volume, is kept, and a LeRobot export appears in it only once it completes. While it writes, the export holds a hidden `.dataviewer-export.partial` directory there, and a second export to the same directory is refused. If the backend stops during an export, delete that hidden directory before exporting there again.
 
 A LeRobot export:
 
@@ -621,7 +627,9 @@ In a LeRobot export, each subtask becomes a row in the `language_persistent` col
 Opening an exported dataset shows its subtasks in the subtask editor. LeRobot subtask rows run until the next one starts, as LeRobot reads them, and an HDF5 export's `.subtasks.json` keeps its exact ranges. When you export again, subtasks you left unchanged keep their recorded data, changed subtasks replace the recorded ones, and deleting every subtask removes them.
 In `dataviewer-export.json`, `subtasks` is `null` when the export kept the recorded subtasks and an empty list when it removed them. A saved draft of the episode takes precedence over the recorded subtasks.
 
-When the source already has LeRobot language annotations, the export keeps them and moves them with the edited frames, apart from rows your subtasks or language instructions replace. Clear **Include subtasks as LeRobot subtask annotations** to export without your subtask changes; recorded subtask rows stay, and a source without language annotations then gets no language columns.
+When the source already has LeRobot language annotations, the export keeps them and moves them with the edited frames, apart from rows your subtasks or language instructions replace. Clear **Include subtasks as LeRobot subtask annotations** to export without your subtask changes; recorded subtask rows stay.
+For an HDF5 source the same option reads **Include subtask metadata**, and clearing it still carries a recorded `.subtasks.json` forward to the export.
+A LeRobot export has language columns when its source has them or when an exported episode gets subtask or language-instruction rows, so clearing the subtask option alone doesn't leave them out.
 
 For a LeRobot source, **Include language instructions as LeRobot task phrasings and plan** adds each episode's most recently saved [language instruction](#language-instruction-vla-annotation):
 
