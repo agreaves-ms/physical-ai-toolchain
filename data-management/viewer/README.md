@@ -613,9 +613,9 @@ A subtask that loses its first or last frames to the edits shrinks to the frames
 
 In a LeRobot export, each subtask becomes a row in the `language_persistent` column, with the subtask label as its text and its first frame's `timestamp`. LeRobot treats a subtask as active until the next one starts, so frames in a gap between two subtasks read as the earlier subtask; `dataviewer-export.json` keeps the exact ranges.
 
-The label becomes the annotation text, so name subtasks the way training should read them. Clear **Include subtasks as LeRobot subtask annotations** to export without these columns.
+The label becomes the annotation text, so name subtasks the way training should read them. Clear **Include subtasks as LeRobot subtask annotations** to leave the subtasks out; an export of a source without language annotations then has no language columns.
 
-When the source already has LeRobot language annotations, the export moves them with the edited frames. Exported subtasks replace the source's `subtask` rows, and other rows, such as plans, keep their recorded text.
+When the source already has LeRobot language annotations, the export keeps them and moves them with the edited frames. Exported subtasks replace the source's `subtask` rows, and other rows, such as plans, keep their recorded text.
 
 Trajectory adjustments never replace recorded joint positions:
 
