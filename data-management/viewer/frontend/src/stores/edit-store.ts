@@ -17,7 +17,6 @@ import {
   buildEditStateUpdate,
   buildOriginalEditState,
   persistEditStateDraft,
-  sameSubtasks,
 } from '@/stores/edit-store-helpers'
 import type {
   EpisodeEditOperations,
@@ -89,8 +88,6 @@ interface EditActions {
   ) => void
   /** Load existing edit operations */
   loadEditOperations: (ops: EpisodeEditOperations) => void
-  /** Take recorded subtasks that arrive after editing started, keeping changed subtasks and drafts */
-  adoptRecordedSubtasks: (recordedSubtasks: SubtaskSegment[]) => void
 
   // Transform actions
   /** Set the global transform */
@@ -362,36 +359,6 @@ export const useEditStore = create<EditStore>()(
             trajectoryAdjustments,
             recordedSubtasks: get().recordedSubtasks,
           })
-        },
-
-        adoptRecordedSubtasks: (recordedSubtasks) => {
-          const state = get()
-          if (sameSubtasks(recordedSubtasks, state.recordedSubtasks)) {
-            return
-          }
-          const draft =
-            state.datasetId !== null && state.episodeIndex !== null
-              ? state.savedEpisodeDrafts[getEpisodeDraftKey(state.datasetId, state.episodeIndex)]
-              : undefined
-          const untouched =
-            draft?.subtasks === undefined && sameSubtasks(state.subtasks, state.recordedSubtasks)
-          if (!untouched) {
-            set({ recordedSubtasks }, false, 'adoptRecordedSubtasks')
-            return
-          }
-          set(
-            {
-              recordedSubtasks,
-              subtasks: structuredClone(recordedSubtasks),
-              originalState: state.originalState && {
-                ...state.originalState,
-                subtasks: structuredClone(recordedSubtasks),
-              },
-              validationErrors: validateSegments(recordedSubtasks),
-            },
-            false,
-            'adoptRecordedSubtasks',
-          )
         },
 
         ...transformActions,

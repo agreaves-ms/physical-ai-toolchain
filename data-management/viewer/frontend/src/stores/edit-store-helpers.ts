@@ -91,17 +91,12 @@ export function buildEditOperations(state: EditStateSnapshot): EpisodeEditOperat
   }
 }
 
-/** Whether two subtask lists hold the same segments in the same order */
-export function sameSubtasks(a: SubtaskSegment[], b: SubtaskSegment[]) {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
 /**
  * Return the subtasks an export should write: none when they match the recorded ones, which the
  * export keeps, and an explicit empty list when every recorded subtask was removed.
  */
 function subtaskEdits(subtasks: SubtaskSegment[], recorded: SubtaskSegment[]) {
-  return sameSubtasks(subtasks, recorded) ? undefined : subtasks
+  return JSON.stringify(subtasks) === JSON.stringify(recorded) ? undefined : subtasks
 }
 
 export function hasEditContent(operations: EpisodeEditOperations) {

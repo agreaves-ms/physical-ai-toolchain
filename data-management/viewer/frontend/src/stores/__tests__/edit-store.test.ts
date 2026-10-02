@@ -441,22 +441,6 @@ describe('useEditStore', () => {
       expect(useEditStore.getState().isDirty).toBe(true)
     })
 
-    it('adopts recorded subtasks that arrive after editing started, keeping changed subtasks', () => {
-      useEditStore.getState().initializeEdit('ds-1', 0, 'local', [])
-      useEditStore.getState().adoptRecordedSubtasks(recorded)
-
-      expect(useEditStore.getState().subtasks).toEqual(recorded)
-      expect(useEditStore.getState().isDirty).toBe(false)
-      expect(hasEditContent(useEditStore.getState().getEditOperations()!)).toBe(false)
-
-      useEditStore.getState().initializeEdit('ds-1', 1, 'local', [])
-      useEditStore.getState().addSubtaskFromRange(10, 20)
-      useEditStore.getState().adoptRecordedSubtasks(recorded)
-
-      expect(useEditStore.getState().subtasks.map((s) => s.frameRange)).toEqual([[10, 20]])
-      expect(useEditStore.getState().getEditOperations()!.subtasks).toHaveLength(1)
-    })
-
     it('lets a saved draft override the recorded subtasks, and keeps them when the draft has none', () => {
       useEditStore.getState().initializeEdit('ds-1', 0, 'local', recorded)
       useEditStore.getState().removeSubtask('recorded-0')

@@ -4,7 +4,6 @@ import { act } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  mockAdoptRecordedSubtasks,
   mockInitializeEdit,
   mockRecordDiagnosticEvent,
   setupAnnotationWorkspaceTestCase,
@@ -73,35 +72,6 @@ describe('useAnnotationWorkspaceShell', () => {
         label: 'Reach',
         frameRange: [0, 4],
         color: SUBTASK_COLORS[0],
-        source: 'recorded',
-      },
-    ])
-  })
-
-  it('hands recorded subtasks that arrive after editing started to the edit store', () => {
-    testState.editDatasetId = 'dataset-1'
-    testState.editEpisodeIndex = 0
-    testState.editPrincipalScopeId = 'principal-test'
-    testState.recordedSubtasks = [
-      {
-        id: 'recorded-0',
-        label: 'Reach',
-        frameRange: [0, 4],
-        color: '#123456',
-        source: 'recorded',
-        description: null,
-      },
-    ]
-
-    renderHookWithProviders(() => useAnnotationWorkspaceShell({}))
-
-    expect(mockInitializeEdit).not.toHaveBeenCalled()
-    expect(mockAdoptRecordedSubtasks).toHaveBeenLastCalledWith([
-      {
-        id: 'recorded-0',
-        label: 'Reach',
-        frameRange: [0, 4],
-        color: '#123456',
         source: 'recorded',
       },
     ])

@@ -58,7 +58,6 @@ export function useAnnotationWorkspaceShell({
   const setEpisodeLabelsInStore = useLabelStore((state) => state.setEpisodeLabels)
   const removedFrames = useEditStore((state) => state.removedFrames)
   const initializeEdit = useEditStore((state) => state.initializeEdit)
-  const adoptRecordedSubtasks = useEditStore((state) => state.adoptRecordedSubtasks)
   const clearTransforms = useEditStore((state) => state.clearTransforms)
   const saveEpisodeDraft = useEditStore((state) => state.saveEpisodeDraft)
   const editDatasetId = useEditStore((state) => state.datasetId)
@@ -145,19 +144,6 @@ export function useAnnotationWorkspaceShell({
     initializeEdit,
     principalQuery.data,
   ])
-
-  // The episode payload can arrive after editing started, as when a dataset switch briefly
-  // leaves the previous dataset's episode in place.
-  useEffect(() => {
-    if (
-      currentDataset &&
-      currentEpisode &&
-      editDatasetId === currentDataset.id &&
-      editEpisodeIndex === currentEpisode.meta.index
-    ) {
-      adoptRecordedSubtasks(recordedSubtaskSegments(currentEpisode.subtasks ?? []))
-    }
-  }, [adoptRecordedSubtasks, currentDataset, currentEpisode, editDatasetId, editEpisodeIndex])
 
   const originalFrameCount = useMemo(() => {
     if (currentEpisode?.meta.length) {
