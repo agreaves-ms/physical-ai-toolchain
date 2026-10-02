@@ -557,6 +557,8 @@ Each episode can carry a structured `LanguageInstructionAnnotation` for vision-l
 
 When a dataset task description is available, the widget seeds the instruction with `source = template` via the "Use as Instruction" button. Otherwise, "Add Instruction" creates a blank instruction with `source = human`. The source can be changed at any time through the dropdown.
 
+A LeRobot export can include the saved instruction as LeRobot `task_aug` and `plan` rows; see [Exporting edited episodes](#exporting-edited-episodes).
+
 ### Episode Analyzer
 
 The **Episode Analyzer** tab combines trajectory metrics, VLM judgments, persisted analysis, episode labels, and language instructions. The run panels and persisted record have distinct storage behavior.
@@ -600,22 +602,32 @@ Supported fields include object, pickup location, grasp outcome, place outcome, 
 | LeRobot v3.0  | A new LeRobot v3.0 dataset at the output path, which must be new or empty and outside the source dataset |
 | HDF5          | `episode_<index>.hdf5` files in the output directory, with `.meta.json` and `.subtasks.json` beside them |
 
+An existing empty output directory, such as a mounted volume, is kept, and a LeRobot export appears in it only once it completes.
+
 A LeRobot export:
 
 - keeps every recorded feature;
 - re-encodes the videos with the source's recorded encoder settings, falling back to LeRobot's defaults for any setting the source doesn't record;
 - recomputes the per-episode and dataset statistics;
-- writes subtasks as LeRobot `subtask` annotations.
+- writes subtasks as LeRobot `subtask` annotations;
+- can add saved language instructions as LeRobot `task_aug` and `plan` annotations.
 
 Removing or inserting frames renumbers `frame_index` and sets `timestamp` to `frame_index / fps`. `dataviewer-export.json` maps each output frame to its source frame and records the edits and remapped subtasks.
 
 A subtask that loses its first or last frames to the edits shrinks to the frames that remain, and one with no frames left is dropped.
 
-In a LeRobot export, each subtask becomes a row in the `language_persistent` column, with the subtask label as its text and its first frame's `timestamp`. LeRobot treats a subtask as active until the next one starts, so frames in a gap between two subtasks read as the earlier subtask; `dataviewer-export.json` keeps the exact ranges.
+In a LeRobot export, each subtask becomes a row in the `language_persistent` column, with the subtask label as its text and its first frame's `timestamp`. LeRobot treats a subtask as active until the next one starts, so frames in a gap between two subtasks read as the earlier subtask; `dataviewer-export.json` keeps the exact ranges. The label becomes the annotation text, so name subtasks the way training should read them.
 
-The label becomes the annotation text, so name subtasks the way training should read them. Clear **Include subtasks as LeRobot subtask annotations** to leave the subtasks out; an export of a source without language annotations then has no language columns.
+Opening an exported dataset shows its subtasks in the subtask editor. LeRobot subtask rows run until the next one starts, as LeRobot reads them, and an HDF5 export's `.subtasks.json` keeps its exact ranges. When you export again, subtasks you left unchanged keep their recorded data, changed subtasks replace the recorded ones, and deleting every subtask removes them. A saved draft of the episode takes precedence over the recorded subtasks.
 
-When the source already has LeRobot language annotations, the export keeps them and moves them with the edited frames. Exported subtasks replace the source's `subtask` rows, and other rows, such as plans, keep their recorded text.
+When the source already has LeRobot language annotations, the export keeps them and moves them with the edited frames, apart from rows your subtasks or language instructions replace. Clear **Include subtasks as LeRobot subtask annotations** to export without your subtask changes; recorded subtask rows stay, and a source without language annotations then gets no language columns.
+
+For a LeRobot source, **Include language instructions as LeRobot task phrasings and plan** adds each episode's most recently saved [language instruction](#language-instruction-vla-annotation):
+
+- the instruction and its paraphrases become `task_aug` rows, which LeRobot rotates `${task}` through during training;
+- the subtask instructions become one numbered `plan` row at the first frame.
+
+These rows replace the source's `task_aug` and `plan` rows for that episode, and episodes without a saved instruction keep theirs. The option is on by default, and `dataviewer-export.json` records whose instruction was used and when it was saved.
 
 Trajectory adjustments never replace recorded joint positions:
 
