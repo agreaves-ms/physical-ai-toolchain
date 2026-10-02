@@ -395,6 +395,25 @@ class TestExportEpisode:
             ("Grasp", [3, 6]),
         ]
 
+    def test_recorded_subtasks_carry_forward_unless_the_edits_replace_them(
+        self, exporter: HDF5Exporter, hdf5_dataset_dir: Path, hdf5_export_dir: Path
+    ):
+        recorded = [
+            {"id": "st-1", "label": "Reach", "frame_range": [0, 4], "color": "#ff0000", "source": "manual"},
+            {"id": "st-2", "label": "Grasp", "frame_range": [5, 9], "color": "#00ff00", "source": "manual"},
+        ]
+        (hdf5_dataset_dir / "episode_000000.subtasks.json").write_text(json.dumps(recorded))
+        subtasks_path = hdf5_export_dir / "episode_000000.subtasks.json"
+
+        kept = EpisodeEditOperations(dataset_id="test", episode_index=0, removed_frames={0, 1})
+        assert exporter.export_episode(episode_index=0, edits=kept).success is True
+        carried = json.loads(subtasks_path.read_text())
+        assert [(subtask["id"], subtask["frame_range"]) for subtask in carried] == [("st-1", [0, 2]), ("st-2", [3, 7])]
+
+        removed = EpisodeEditOperations(dataset_id="test", episode_index=0, subtasks=[])
+        assert exporter.export_episode(episode_index=0, edits=removed).success is True
+        assert not subtasks_path.exists()
+
     def test_export_nonexistent_episode(self, exporter: HDF5Exporter):
         result = exporter.export_episode(episode_index=999)
 

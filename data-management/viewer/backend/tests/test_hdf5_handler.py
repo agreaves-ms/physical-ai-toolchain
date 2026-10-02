@@ -7,6 +7,7 @@ discovery for datasets with recording session subdirectories.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -401,6 +402,41 @@ class TestSubdirectoryEpisodeDiscovery:
         loader = HDF5Loader(tmp_path)
         episodes = loader.list_episodes()
         assert episodes == [0, 1]
+
+
+class TestRecordedSubtasks:
+    """The subtask file an HDF5 export writes beside an episode comes back with it."""
+
+    def test_subtask_file_beside_the_episode_comes_back_as_subtasks(self, tmp_path):
+        _create_minimal_hdf5(tmp_path / "episode_000000.hdf5", num_frames=10)
+        entries = [
+            {
+                "id": "st-1",
+                "label": "Reach",
+                "frame_range": [0, 3],
+                "color": "#ff0000",
+                "source": "manual",
+                "description": "first",
+            },
+            {"id": "st-2", "label": "Past the end", "frame_range": [5, 10], "color": "#00ff00", "source": "manual"},
+            {"id": "st-3", "frame_range": [4, 6]},
+        ]
+        (tmp_path / "episode_000000.subtasks.json").write_text(json.dumps(entries))
+        handler = HDF5FormatHandler()
+        assert handler.get_loader("session", tmp_path)
+
+        recorded = handler.load_episode("session", 0).subtasks
+
+        assert [s.model_dump() for s in recorded] == [
+            {
+                "id": "st-1",
+                "label": "Reach",
+                "frame_range": (0, 3),
+                "color": "#ff0000",
+                "source": "manual",
+                "description": "first",
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ row of the same style takes over. ``language_events`` holds rows that fire on th
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Collection, Sequence
 from typing import Any
 
 from .episode_edits import PlannedFrame, SubtaskSegment, output_indices, remap_subtasks
@@ -97,12 +98,38 @@ def subtask_rows(
 
 def episode_persistent_rows(
     recorded: list[LanguageRow],
-    subtasks: list[LanguageRow],
+    added: list[LanguageRow],
+    replaced_styles: Collection[str],
     source_timestamps: list[float],
     plan: list[PlannedFrame],
     output_timestamps: list[float],
 ) -> list[LanguageRow]:
-    """Return an episode's persistent rows on the output frames, with exported subtasks replacing recorded ones."""
-    if subtasks:
-        recorded = [row for row in recorded if row.get("style") != SUBTASK_STYLE]
-    return sorted(plan_persistent_rows(recorded, source_timestamps, plan, output_timestamps) + subtasks, key=_sort_key)
+    """Return an episode's persistent rows on the output frames; recorded rows of the replaced styles are dropped."""
+    kept = [row for row in recorded if row.get("style") not in replaced_styles]
+    return sorted(plan_persistent_rows(kept, source_timestamps, plan, output_timestamps) + added, key=_sort_key)
+
+
+def recorded_subtasks(rows: list[Any] | None, timestamps: Sequence[float]) -> list[SubtaskSegment]:
+    """
+    Return an episode's recorded ``subtask`` rows as subtasks, each running until the next row starts.
+
+    A row starts on the first frame at or after its timestamp, and rows after the last frame are ignored.
+    An empty row ends the previous subtask without starting another. When rows share a frame, the later
+    one in the list wins; LeRobot itself refuses such rows as ambiguous.
+    """
+    starts: dict[int, str] = {}
+    for row in rows or []:
+        if not isinstance(row, dict) or row.get("style") != SUBTASK_STYLE or row.get("timestamp") is None:
+            continue
+        frame = bisect_left(timestamps, float(row["timestamp"]) - _TIMESTAMP_TOLERANCE_S)
+        if frame < len(timestamps):
+            starts[frame] = str(row.get("content") or "").strip()
+    frames = sorted(starts)
+    if not frames:
+        return []
+    ends = [following - 1 for following in frames[1:]] + [len(timestamps) - 1]
+    spans = [(start, end, starts[start]) for start, end in zip(frames, ends, strict=True) if starts[start]]
+    return [
+        SubtaskSegment(id=f"recorded-{index}", label=label, frame_range=(start, end), color=None, source="recorded")
+        for index, (start, end, label) in enumerate(spans)
+    ]

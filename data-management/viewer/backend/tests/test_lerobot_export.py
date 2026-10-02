@@ -498,6 +498,22 @@ def test_subtasks_replace_source_subtask_rows_and_keep_other_styles(source: Path
     ]
 
 
+def test_an_empty_subtask_list_removes_recorded_subtask_rows(source: Path) -> None:
+    _add_language(
+        source,
+        {0: [_row("plan", "reach then grasp", 0.0), _row("subtask", "old reach", 0.0)]},
+        {},
+    )
+
+    removed = _export(source, [0], _edits(0, subtasks=[]))
+    kept = LeRobotExporter(source, source.parents[1] / "kept").export_episodes([0], _edits(0, removed_frames={1}))
+
+    assert _summary(_language(removed, 0)[0][0]) == [("plan", "reach then grasp", 0.0)]
+    assert kept.success, kept.error
+    kept_rows = _language(source.parents[1] / "kept", 0)[0][0]
+    assert _summary(kept_rows) == [("plan", "reach then grasp", 0.0), ("subtask", "old reach", 0.0)]
+
+
 def test_writes_use_standard_paths_even_when_source_templates_point_elsewhere(source: Path) -> None:
     info = json.loads((source / "meta/info.json").read_text())
     info["data_path"] = "../lerobot/data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"

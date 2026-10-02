@@ -119,7 +119,7 @@ def _edit_operations(dataset_id: str, edit_req: EpisodeEditRequest) -> EpisodeEd
             else None,
             "removedFrames": edit_req.removedFrames,
             "insertedFrames": [i.model_dump() for i in edit_req.insertedFrames] if edit_req.insertedFrames else None,
-            "subtasks": [s.model_dump() for s in edit_req.subtasks] if edit_req.subtasks else None,
+            "subtasks": [s.model_dump() for s in edit_req.subtasks] if edit_req.subtasks is not None else None,
             "trajectoryAdjustments": [a.model_dump() for a in edit_req.trajectoryAdjustments]
             if edit_req.trajectoryAdjustments
             else None,

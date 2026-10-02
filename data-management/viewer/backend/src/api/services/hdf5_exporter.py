@@ -21,12 +21,12 @@ from numpy.typing import NDArray
 
 from ..models.datasources import FrameInsertion
 from .episode_edits import (
+    SUBTASK_FILE_SUFFIX,
     EpisodeEditOperations,
     ExportError,
     ExportProgress,
     ExportResult,
     ProgressCallback,
-    SubtaskSegment,
     TrajectoryAdjustment,
     apply_trajectory_adjustments,
     output_indices,
@@ -209,12 +209,18 @@ class HDF5Exporter:
             self._export_meta_json(meta_path, episode_index, edits, total_frames, output_frames)
             output_files.append(str(meta_path))
 
-            # Export subtasks if present
-            if edits and edits.subtasks:
-                subtasks_path = self.dst_path / f"episode_{episode_index:06d}.subtasks.json"
-                plan = plan_frames(total_frames, removed_frames, inserted_frames)
-                self._export_subtasks(subtasks_path, edits.subtasks, output_indices(plan))
+            # A subtask list, even an empty one, replaces the recorded subtasks; no list carries them forward.
+            subtasks = edits.subtasks if edits and edits.subtasks is not None else None
+            if subtasks is None:
+                subtasks = self.loader.recorded_subtasks(episode_index, total_frames)
+            plan = plan_frames(total_frames, removed_frames, inserted_frames)
+            remapped = remap_subtasks(subtasks, output_indices(plan))
+            subtasks_path = self.dst_path / f"episode_{episode_index:06d}{SUBTASK_FILE_SUFFIX}"
+            if remapped:
+                subtasks_path.write_text(json.dumps(remapped, indent=2))
                 output_files.append(str(subtasks_path))
+            else:
+                subtasks_path.unlink(missing_ok=True)
 
             if progress_callback:
                 progress_callback(
@@ -653,12 +659,3 @@ class HDF5Exporter:
             meta["edits"] = edit_info
 
         path.write_text(json.dumps(meta, indent=2))
-
-    def _export_subtasks(
-        self,
-        path: Path,
-        subtasks: list[SubtaskSegment],
-        index_map: dict[int, int],
-    ) -> None:
-        """Export subtask segments with frame ranges mapped to output indices."""
-        path.write_text(json.dumps(remap_subtasks(subtasks, index_map), indent=2))

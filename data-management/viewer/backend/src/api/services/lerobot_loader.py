@@ -24,6 +24,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from numpy.typing import NDArray
 
+from .episode_edits import SubtaskSegment
+from .lerobot_language import LANGUAGE_PERSISTENT, recorded_subtasks
+
 logger = logging.getLogger(__name__)
 
 _TASK_DESCRIPTION_COLUMNS = ("task", "__index_level_0__", "task_description")
@@ -73,6 +76,9 @@ class LeRobotEpisodeData:
 
     metadata: dict[str, Any]
     """Additional metadata from info.json."""
+
+    subtasks: list[SubtaskSegment] = field(default_factory=list)
+    """Subtasks recorded as ``subtask`` rows in ``language_persistent``."""
 
 
 class LeRobotLoaderError(Exception):
@@ -539,6 +545,13 @@ class LeRobotLoader:
             # Get task index
             task_index = int(table.column("task_index")[0].as_py()) if "task_index" in col_names else 0
 
+            # Every frame repeats the episode's persistent language rows
+            subtasks = (
+                recorded_subtasks(table.column(LANGUAGE_PERSISTENT)[0].as_py(), timestamps.tolist())
+                if LANGUAGE_PERSISTENT in col_names
+                else []
+            )
+
             # Find video paths. Honor per-episode video chunk/file indices
             # recorded in meta/episodes parquet so the path resolves to the
             # correct MP4 segment when video and data parquets are chunked
@@ -579,6 +592,7 @@ class LeRobotLoader:
                     "fps": info.fps,
                     "codebase_version": info.codebase_version,
                 },
+                subtasks=subtasks,
             )
 
         except LeRobotLoaderError:

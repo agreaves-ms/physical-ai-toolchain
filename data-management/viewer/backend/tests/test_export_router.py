@@ -217,6 +217,25 @@ class TestExportEpisodes:
         assert kwargs["episode_indices"] == [0]
         assert 0 in kwargs["edits_map"]
 
+    def test_an_empty_subtask_list_reaches_the_exporter_as_empty(
+        self,
+        client: TestClient,
+        override_service,
+        dataset_layout,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _, _dataset, output_dir = dataset_layout
+        exporter_instance = MagicMock()
+        exporter_instance.export_episodes.return_value = _make_export_result()
+        _patch_exporter(monkeypatch, MagicMock(return_value=exporter_instance))
+        edits = {"0": {"episodeIndex": 0, "subtasks": []}, "1": {"episodeIndex": 1, "removedFrames": [2]}}
+        body = {"episodeIndices": [0, 1], "outputPath": str(output_dir), "applyEdits": True, "edits": edits}
+
+        assert client.post("/api/datasets/ds-1/export", json=body).status_code == 200
+
+        edits_map = exporter_instance.export_episodes.call_args.kwargs["edits_map"]
+        assert (edits_map[0].subtasks, edits_map[1].subtasks) == ([], None)
+
     def test_trajectory_adjustments_reach_the_exporter(
         self,
         client: TestClient,

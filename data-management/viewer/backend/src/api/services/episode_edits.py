@@ -7,9 +7,11 @@ export endpoints stream, and the frame plan that maps output frames to source fr
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -29,12 +31,52 @@ class SubtaskSegment:
     """Human-readable label."""
     frame_range: tuple[int, int]
     """Frame range [start, end] inclusive."""
-    color: str
-    """Display color (hex)."""
+    color: str | None
+    """Display color (hex), when known."""
     source: str
-    """How this segment was created: 'manual' or 'auto'."""
+    """How this segment was created: 'manual', 'auto' or 'recorded'."""
     description: str | None = None
     """Optional description."""
+
+
+SUBTASK_FILE_SUFFIX = ".subtasks.json"
+"""Suffix of the file beside an exported HDF5 episode that holds its subtasks."""
+
+
+def read_subtask_file(path: Path, length: int) -> list[SubtaskSegment]:
+    """
+    Return the valid subtasks in a subtask file for an episode of ``length`` frames.
+
+    An entry needs a non-empty label and a frame range inside the episode; other entries are skipped,
+    and a missing or unreadable file has no subtasks.
+    """
+    try:
+        entries = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    subtasks = []
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        label, frame_range = entry.get("label"), entry.get("frame_range")
+        if not isinstance(label, str) or not label.strip() or not isinstance(frame_range, list):
+            continue
+        if len(frame_range) != 2 or any(type(frame) is not int for frame in frame_range):
+            continue
+        if not 0 <= frame_range[0] <= frame_range[1] < length:
+            continue
+        segment_id, color, source, description = (entry.get(key) for key in ("id", "color", "source", "description"))
+        subtasks.append(
+            SubtaskSegment(
+                id=segment_id if isinstance(segment_id, str) else f"recorded-{len(subtasks)}",
+                label=label,
+                frame_range=(frame_range[0], frame_range[1]),
+                color=color if isinstance(color, str) else None,
+                source=source if isinstance(source, str) else "recorded",
+                description=description if isinstance(description, str) else None,
+            )
+        )
+    return subtasks
 
 
 @dataclass
@@ -235,7 +277,7 @@ def parse_edit_operations(data: dict) -> EpisodeEditOperations:
         ]
 
     subtasks = None
-    if data.get("subtasks"):
+    if data.get("subtasks") is not None:
         subtasks = [
             SubtaskSegment(
                 id=st["id"],

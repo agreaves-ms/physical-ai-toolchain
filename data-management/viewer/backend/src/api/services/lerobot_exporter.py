@@ -50,6 +50,7 @@ from .lerobot_language import (
     LANGUAGE_EVENTS,
     LANGUAGE_FEATURE,
     LANGUAGE_PERSISTENT,
+    SUBTASK_STYLE,
     episode_persistent_rows,
     plan_events,
     subtask_rows,
@@ -551,12 +552,15 @@ class LeRobotExporter:
         written, persistent, events = set(recorded), [], []
         for episode, table in zip(episodes, tables, strict=True):
             output_times = _timestamps(table, info.fps)
-            subtasks = subtask_rows((episode.edits.subtasks or []) if episode.edits else [], episode.plan, output_times)
+            # A subtask list, even an empty one, replaces the recorded subtasks; no list keeps them.
+            edited = episode.edits.subtasks if episode.edits else None
+            subtasks = subtask_rows(edited or [], episode.plan, output_times)
             if subtasks:
                 written.update(LANGUAGE_COLUMNS)
             rows, frame_events = _recorded_language(episode.table, recorded)
             source_times = _timestamps(episode.table, info.fps)
-            planned = episode_persistent_rows(rows, subtasks, source_times, episode.plan, output_times)
+            replaced = {SUBTASK_STYLE} if edited is not None else set()
+            planned = episode_persistent_rows(rows, subtasks, replaced, source_times, episode.plan, output_times)
             persistent.extend([planned] * episode.length)
             events.extend(plan_events(frame_events, episode.plan))
         columns = {LANGUAGE_PERSISTENT: persistent, LANGUAGE_EVENTS: events}
