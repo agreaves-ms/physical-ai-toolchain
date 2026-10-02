@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from .episode_edits import PlannedFrame, SubtaskSegment, output_indices, remap_subtasks
@@ -19,11 +20,36 @@ LANGUAGE_EVENTS = "language_events"
 LANGUAGE_COLUMNS = (LANGUAGE_PERSISTENT, LANGUAGE_EVENTS)
 LANGUAGE_FEATURE = {"dtype": "language", "shape": [1], "names": None}
 SUBTASK_STYLE = "subtask"
+TASK_AUG_STYLE = "task_aug"
+PLAN_STYLE = "plan"
 
 _TIMESTAMP_TOLERANCE_S = 1e-4
 """Matches LeRobot's frame-timestamp tolerance, so float32 rounding can't push a row onto the next frame."""
 
 LanguageRow = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class LanguageInstruction:
+    """An episode's saved language instruction and who saved it, for a LeRobot export."""
+
+    instruction: str
+    paraphrases: Sequence[str] = ()
+    subtask_instructions: Sequence[str] = ()
+    annotator_id: str | None = None
+    saved_at: str | None = None
+    """ISO 8601 time the annotation was saved."""
+
+
+def _persistent_row(role: str, content: str, style: str, timestamp: float) -> LanguageRow:
+    return {
+        "role": role,
+        "content": content,
+        "style": style,
+        "timestamp": timestamp,
+        "camera": None,
+        "tool_calls": None,
+    }
 
 
 def _sort_key(row: LanguageRow) -> tuple[float, str, str]:
@@ -84,16 +110,26 @@ def subtask_rows(
         if remapped:
             labels[remapped[0]["frame_range"][0]] = subtask.label
     return [
-        {
-            "role": "assistant",
-            "content": label,
-            "style": SUBTASK_STYLE,
-            "timestamp": output_timestamps[start],
-            "camera": None,
-            "tool_calls": None,
-        }
+        _persistent_row("assistant", label, SUBTASK_STYLE, output_timestamps[start])
         for start, label in sorted(labels.items())
     ]
+
+
+def instruction_rows(language: LanguageInstruction, timestamp: float) -> list[LanguageRow]:
+    """
+    Return the ``task_aug`` and ``plan`` rows LeRobot's annotation pipeline writes for an instruction.
+
+    The instruction comes first, then its paraphrases, without duplicates; LeRobot's renderer rotates
+    ``${task}`` through these rows. Subtask instructions become one numbered ``plan`` row, the plan the
+    pipeline writes at an episode's start.
+    """
+    phrasings = dict.fromkeys(text.strip() for text in (language.instruction, *language.paraphrases))
+    rows = [_persistent_row("user", text, TASK_AUG_STYLE, timestamp) for text in phrasings if text]
+    steps = [step.strip() for step in language.subtask_instructions if step.strip()]
+    if steps:
+        plan = "\n".join(f"{number}. {step}" for number, step in enumerate(steps, start=1))
+        rows.append(_persistent_row("assistant", plan, PLAN_STYLE, timestamp))
+    return rows
 
 
 def episode_persistent_rows(

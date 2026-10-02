@@ -19,6 +19,7 @@ from src.api.models.datasources import FrameInsertion
 from src.api.services.episode_edits import EpisodeEditOperations, SubtaskSegment, TrajectoryAdjustment
 from src.api.services.image_transform import CropRegion, ImageTransform, ResizeDimensions
 from src.api.services.lerobot_exporter import ADJUSTED_STATE, ADJUSTED_STATE_MASK, PROVENANCE_FILE, LeRobotExporter
+from src.api.services.lerobot_language import LanguageInstruction
 
 FPS = 10
 WIDTH, HEIGHT = 32, 24
@@ -512,6 +513,36 @@ def test_an_empty_subtask_list_removes_recorded_subtask_rows(source: Path) -> No
     assert kept.success, kept.error
     kept_rows = _language(source.parents[1] / "kept", 0)[0][0]
     assert _summary(kept_rows) == [("plan", "reach then grasp", 0.0), ("subtask", "old reach", 0.0)]
+
+
+def test_language_instructions_become_task_phrasings_and_a_plan(source: Path) -> None:
+    recorded = [_row("task_aug", "old phrasing", 0.0, role="user"), _row("plan", "1. old step", 0.0)]
+    _add_language(source, {0: [*recorded, _row("subtask", "Reach", 0.0)]}, {})
+    language = LanguageInstruction(
+        instruction="Pick up the gear",
+        paraphrases=["Grab the gear", " Pick up the gear ", "Lift the gear"],
+        subtask_instructions=["Approach the gear", "Grasp it"],
+        annotator_id="local",
+        saved_at="2026-10-01T12:00:00+00:00",
+    )
+    output = source.parents[1] / "edited"
+
+    result = LeRobotExporter(source, output).export_episodes([0], _edits(0, removed_frames={0}), language={0: language})
+
+    assert result.success, result.error
+    persistent, _ = _language(output, 0)[0]
+    assert [(row["style"], row["role"], row["content"], row["timestamp"]) for row in persistent] == [
+        ("plan", "assistant", "1. Approach the gear\n2. Grasp it", 0.0),
+        ("subtask", "assistant", "Reach", 0.0),
+        ("task_aug", "user", "Pick up the gear", 0.0),
+        ("task_aug", "user", "Grab the gear", 0.0),
+        ("task_aug", "user", "Lift the gear", 0.0),
+    ]
+    provenance = json.loads((output / PROVENANCE_FILE).read_text())
+    assert provenance["episodes"][0]["language_instruction"] == {
+        "annotator_id": "local",
+        "saved_at": "2026-10-01T12:00:00+00:00",
+    }
 
 
 def test_writes_use_standard_paths_even_when_source_templates_point_elsewhere(source: Path) -> None:

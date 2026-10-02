@@ -8,12 +8,15 @@ HDF5 exporter mocked out.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+
+from src.api.services.lerobot_language import LanguageInstruction
 
 
 @pytest.fixture
@@ -60,6 +63,53 @@ def override_service(mock_service):
         yield mock_service
     finally:
         app.dependency_overrides.pop(get_dataset_service, None)
+
+
+@pytest.fixture
+def saved_annotations():
+    """Install an annotation service holding two saved instructions for episode 0, the later one listed first."""
+    from src.api.main import app
+    from src.api.models.annotations import EpisodeAnnotationFile, LanguageInstructionAnnotation
+    from src.api.services.annotation_service import get_annotation_service
+
+    from .test_annotation_service import _build_annotation
+
+    older = _build_annotation("annotator-a").model_copy(
+        update={
+            "timestamp": datetime(2026, 9, 30, tzinfo=UTC),
+            "language_instruction": LanguageInstructionAnnotation(instruction="Older", source="human"),
+        }
+    )
+    newer = _build_annotation("annotator-b").model_copy(
+        update={
+            "timestamp": datetime(2026, 10, 1, 12, tzinfo=UTC),
+            "language_instruction": LanguageInstructionAnnotation(
+                instruction="Pick up the gear",
+                source="human",
+                paraphrases=["Grab the gear"],
+                subtask_instructions=["Approach"],
+            ),
+        }
+    )
+    files = {0: EpisodeAnnotationFile(episode_index=0, dataset_id="ds-1", annotations=[newer, older])}
+    service = MagicMock()
+    service.get_annotation = AsyncMock(side_effect=lambda _dataset_id, index: files.get(index))
+    app.dependency_overrides[get_annotation_service] = lambda: service
+    try:
+        yield service
+    finally:
+        app.dependency_overrides.pop(get_annotation_service, None)
+
+
+def _post_export(client: TestClient, endpoint: str, body: dict[str, Any]) -> None:
+    """Run an export through the synchronous or the streaming endpoint and require it to complete."""
+    if endpoint == "export":
+        resp = client.post("/api/datasets/ds-1/export", json=body)
+        assert resp.status_code == 200, resp.text
+        return
+    with client.stream("POST", "/api/datasets/ds-1/export/stream", json=body) as resp:
+        assert resp.status_code == 200
+        assert "event: complete" in "".join(resp.iter_text())
 
 
 def _make_export_result(success: bool = True, error: str | None = None) -> MagicMock:
@@ -414,6 +464,51 @@ class TestLeRobotExports:
 
         assert "event: complete" in body
         cls.assert_called_once_with(dataset_dir, base / "ds-1-edited", dataset_id="ds-1")
+
+    @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
+    @pytest.mark.parametrize("include", [True, False])
+    def test_lerobot_exports_get_the_latest_saved_language_instruction_when_asked(
+        self,
+        client: TestClient,
+        override_service,
+        saved_annotations,
+        dataset_layout,
+        monkeypatch: pytest.MonkeyPatch,
+        endpoint: str,
+        include: bool,
+    ) -> None:
+        base, _dataset, _output = dataset_layout
+        override_service.dataset_is_lerobot.return_value = True
+        _cls, instance = _patch_lerobot_exporter(monkeypatch)
+        body = {"episodeIndices": [0, 1], "outputPath": str(base / "edited"), "includeLanguageInstructions": include}
+
+        _post_export(client, endpoint, body)
+
+        latest = LanguageInstruction(
+            "Pick up the gear", ("Grab the gear",), ("Approach",), "annotator-b", "2026-10-01T12:00:00+00:00"
+        )
+        assert instance.export_episodes.call_args.kwargs["language"] == ({0: latest} if include else {})
+
+    @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
+    def test_hdf5_exports_ignore_the_language_option(
+        self,
+        client: TestClient,
+        override_service,
+        saved_annotations,
+        dataset_layout,
+        monkeypatch: pytest.MonkeyPatch,
+        endpoint: str,
+    ) -> None:
+        _base, _dataset, output_dir = dataset_layout
+        instance = MagicMock()
+        instance.export_episodes.return_value = _make_export_result()
+        _patch_exporter(monkeypatch, MagicMock(return_value=instance))
+        body = {"episodeIndices": [0], "outputPath": str(output_dir), "includeLanguageInstructions": True}
+
+        _post_export(client, endpoint, body)
+
+        assert "language" not in instance.export_episodes.call_args.kwargs
+        saved_annotations.get_annotation.assert_not_called()
 
 
 class TestExportEpisodesStream:

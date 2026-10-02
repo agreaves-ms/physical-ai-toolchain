@@ -6,7 +6,8 @@ adjustments become the derived ``adjusted.observation.state`` and ``adjusted.obs
 features. Removing or inserting frames renumbers the timeline so every timestamp stays
 ``frame_index / fps``, and LeRobot language annotation rows move with it; ``dataviewer-export.json``
 records which source frame each output frame came from, the applied edits and the remapped subtasks,
-which are also written as LeRobot ``subtask`` language rows.
+which are also written as LeRobot ``subtask`` language rows. A saved language instruction can be written
+as ``task_aug`` and ``plan`` rows.
 Videos are decoded and re-encoded with the source's recorded encoder settings, and per-episode and
 dataset statistics are recomputed.
 """
@@ -51,7 +52,9 @@ from .lerobot_language import (
     LANGUAGE_FEATURE,
     LANGUAGE_PERSISTENT,
     SUBTASK_STYLE,
+    LanguageInstruction,
     episode_persistent_rows,
+    instruction_rows,
     plan_events,
     subtask_rows,
 )
@@ -99,6 +102,7 @@ class _Episode:
     offset: int = 0
     windows: dict[str, tuple[float, float]] = field(default_factory=dict)
     image_samples: dict[str, list[NDArray[np.uint8]]] = field(default_factory=dict)
+    language: LanguageInstruction | None = None
 
     @property
     def length(self) -> int:
@@ -338,6 +342,7 @@ class LeRobotExporter:
         episode_indices: list[int],
         edits_map: dict[int, EpisodeEditOperations] | None = None,
         progress_callback: ProgressCallback | None = None,
+        language: dict[int, LanguageInstruction] | None = None,
     ) -> ExportResult:
         """
         Export the requested episodes, renumbered from 0, into one derived dataset.
@@ -346,6 +351,7 @@ class LeRobotExporter:
             episode_indices: Source episode indices, in output order.
             edits_map: Edit operations by source episode index.
             progress_callback: Optional callback for progress updates.
+            language: Saved language instructions by source episode index, written as ``task_aug`` and ``plan`` rows.
 
         Returns:
             ExportResult with the dataset directory and aggregate statistics.
@@ -362,7 +368,7 @@ class LeRobotExporter:
                 raise LeRobotExportError("each episode can be exported only once")
             if self.dst_path.exists() and (not self.dst_path.is_dir() or any(self.dst_path.iterdir())):
                 raise LeRobotExportError("the output directory must be new or empty")
-            episodes = self._episodes(info, episode_indices, edits_map or {})
+            episodes = self._episodes(info, episode_indices, edits_map or {}, language or {})
             sizes = self._video_sizes(info, episodes)
             existing = self.dst_path.exists()
             if not existing:
@@ -404,7 +410,11 @@ class LeRobotExporter:
                 shutil.rmtree(staging, ignore_errors=True)
 
     def _episodes(
-        self, info: LeRobotDatasetInfo, episode_indices: list[int], edits_map: dict[int, EpisodeEditOperations]
+        self,
+        info: LeRobotDatasetInfo,
+        episode_indices: list[int],
+        edits_map: dict[int, EpisodeEditOperations],
+        language: dict[int, LanguageInstruction],
     ) -> list[_Episode]:
         unsupported = sorted(name for name, feature in info.features.items() if feature.get("dtype") == "image")
         if unsupported:
@@ -424,7 +434,11 @@ class LeRobotExporter:
             )
             if not plan:
                 raise LeRobotExportError(f"episode {source_index} has no frames left after its edits")
-            episodes.append(_Episode(source_index, output_index, table, record, edits, plan, offset))
+            episodes.append(
+                _Episode(
+                    source_index, output_index, table, record, edits, plan, offset, language=language.get(source_index)
+                )
+            )
             offset += len(plan)
         return episodes
 
@@ -547,20 +561,24 @@ class LeRobotExporter:
     def _language_columns(
         info: LeRobotDatasetInfo, episodes: list[_Episode], tables: list[pa.Table]
     ) -> dict[str, pa.Array]:
-        """Return language columns on the output frames: the source's rows moved with the edits, plus subtasks."""
+        """Return language columns on the output frames: the source's rows moved with the edits, plus added rows."""
         recorded = {name for name in LANGUAGE_COLUMNS if all(name in e.table.column_names for e in episodes)}
         written, persistent, events = set(recorded), [], []
         for episode, table in zip(episodes, tables, strict=True):
             output_times = _timestamps(table, info.fps)
             # A subtask list, even an empty one, replaces the recorded subtasks; no list keeps them.
             edited = episode.edits.subtasks if episode.edits else None
-            subtasks = subtask_rows(edited or [], episode.plan, output_times)
-            if subtasks:
+            added = subtask_rows(edited or [], episode.plan, output_times)
+            replaced = {SUBTASK_STYLE} if edited is not None else set()
+            if episode.language is not None:
+                instruction = instruction_rows(episode.language, output_times[0])
+                added += instruction
+                replaced |= {row["style"] for row in instruction}
+            if added:
                 written.update(LANGUAGE_COLUMNS)
             rows, frame_events = _recorded_language(episode.table, recorded)
             source_times = _timestamps(episode.table, info.fps)
-            replaced = {SUBTASK_STYLE} if edited is not None else set()
-            planned = episode_persistent_rows(rows, subtasks, replaced, source_times, episode.plan, output_times)
+            planned = episode_persistent_rows(rows, added, replaced, source_times, episode.plan, output_times)
             persistent.extend([planned] * episode.length)
             events.extend(plan_events(frame_events, episode.plan))
         columns = {LANGUAGE_PERSISTENT: persistent, LANGUAGE_EVENTS: events}
@@ -728,6 +746,12 @@ class LeRobotExporter:
                         ],
                         "subtasks": remap_subtasks(edits.subtasks or [], output_indices(episode.plan)) if edits else [],
                     },
+                    "language_instruction": {
+                        "annotator_id": episode.language.annotator_id,
+                        "saved_at": episode.language.saved_at,
+                    }
+                    if episode.language
+                    else None,
                 }
             )
         return {

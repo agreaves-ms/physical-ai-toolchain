@@ -19,6 +19,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt
 
 from ..csrf import require_csrf_token
+from ..models.annotations import EpisodeAnnotationFile
+from ..services.annotation_service import AnnotationService, get_annotation_service
 from ..services.dataset_service import DatasetService, get_dataset_service
 from ..services.episode_edits import (
     EpisodeEditOperations,
@@ -29,6 +31,7 @@ from ..services.episode_edits import (
 )
 from ..services.hdf5_exporter import HDF5Exporter
 from ..services.lerobot_exporter import LeRobotExporter
+from ..services.lerobot_language import LanguageInstruction
 from ..validation import (
     SAFE_DATASET_ID_PATTERN,
     SanitizedModel,
@@ -134,6 +137,10 @@ class ExportRequest(SanitizedModel):
     outputPath: str = Field(..., description="Output directory path")
     applyEdits: bool = Field(True, description="Whether to apply edit operations")
     edits: dict[int, EpisodeEditRequest] | None = Field(None, description="Edit operations by episode index")
+    includeLanguageInstructions: bool = Field(
+        False,
+        description="For LeRobot sources, write each episode's latest saved instruction as task_aug and plan rows",
+    )
 
 
 class ExportResultResponse(BaseModel):
@@ -173,6 +180,45 @@ def _prepare_output(service: DatasetService, dataset_id: str, dataset_path: Path
     return False
 
 
+def _latest_instruction(annotation_file: EpisodeAnnotationFile | None) -> LanguageInstruction | None:
+    """Return the most recently saved language instruction among an episode's annotations, if any."""
+    saved = [
+        annotation
+        for annotation in (annotation_file.annotations if annotation_file else [])
+        if annotation.language_instruction
+    ]
+    if not saved:
+        return None
+    latest = max(saved, key=lambda annotation: annotation.timestamp)
+    language = latest.language_instruction
+    return LanguageInstruction(
+        language.instruction,
+        tuple(language.paraphrases),
+        tuple(language.subtask_instructions),
+        latest.annotator_id,
+        latest.timestamp.isoformat(),
+    )
+
+
+async def _export_options(
+    dataset_id: str, request: ExportRequest, lerobot: bool, annotations: AnnotationService
+) -> dict[str, Any]:
+    """Return the exporter's options: parsed edits and, when requested for LeRobot, the saved instructions."""
+    edits_map = None
+    if request.applyEdits and request.edits:
+        edits_map = {index: _edit_operations(dataset_id, edit_req) for index, edit_req in request.edits.items()}
+    options: dict[str, Any] = {"episode_indices": request.episodeIndices, "edits_map": edits_map}
+    if lerobot:
+        language = {}
+        if request.includeLanguageInstructions:
+            for index in request.episodeIndices:
+                instruction = _latest_instruction(await annotations.get_annotation(dataset_id, index))
+                if instruction is not None:
+                    language[index] = instruction
+        options["language"] = language
+    return options
+
+
 def _exporter(lerobot: bool, dataset_id: str, dataset_path: Path, output_path: Path) -> HDF5Exporter | LeRobotExporter:
     if lerobot:
         return LeRobotExporter(dataset_path, output_path, dataset_id=dataset_id)
@@ -199,6 +245,7 @@ async def export_episodes(
     dataset_id: str = Depends(path_string_param("dataset_id", pattern=SAFE_DATASET_ID_PATTERN, label="dataset_id")),
     request: ExportRequest = ...,
     service: DatasetService = Depends(get_dataset_service),
+    annotations: AnnotationService = Depends(get_annotation_service),
 ) -> ExportResultResponse:
     """
     Export episodes with edit operations applied.
@@ -253,18 +300,8 @@ async def export_episodes(
 
     try:
         exporter = _exporter(lerobot, dataset_id, dataset_path, output_path)
-
-        # Parse edit operations
-        edits_map: dict[int, EpisodeEditOperations] | None = None
-        if request.applyEdits and request.edits:
-            edits_map = {}
-            for episode_idx, edit_req in request.edits.items():
-                edits_map[episode_idx] = _edit_operations(dataset_id, edit_req)
-
-        result = exporter.export_episodes(
-            episode_indices=request.episodeIndices,
-            edits_map=edits_map,
-        )
+        options = await _export_options(dataset_id, request, lerobot, annotations)
+        result = exporter.export_episodes(**options)
 
         return _public_export_result(result)
 
@@ -285,6 +322,7 @@ async def export_episodes_stream(
     dataset_id: str = Depends(path_string_param("dataset_id", pattern=SAFE_DATASET_ID_PATTERN, label="dataset_id")),
     request: ExportRequest = ...,
     service: DatasetService = Depends(get_dataset_service),
+    annotations: AnnotationService = Depends(get_annotation_service),
 ) -> StreamingResponse:
     """
     Export episodes with SSE progress streaming.
@@ -343,13 +381,7 @@ async def export_episodes_stream(
     async def event_generator():
         try:
             exporter = _exporter(lerobot, dataset_id, dataset_path, output_path)
-
-            # Parse edit operations
-            edits_map: dict[int, EpisodeEditOperations] | None = None
-            if request.applyEdits and request.edits:
-                edits_map = {}
-                for episode_idx, edit_req in request.edits.items():
-                    edits_map[episode_idx] = _edit_operations(dataset_id, edit_req)
+            options = await _export_options(dataset_id, request, lerobot, annotations)
 
             # Queue for progress updates
             progress_queue: asyncio.Queue[ExportProgress | None] = asyncio.Queue()
@@ -365,11 +397,7 @@ async def export_episodes_stream(
             loop = asyncio.get_event_loop()
             export_task = loop.run_in_executor(
                 None,
-                lambda: exporter.export_episodes(
-                    episode_indices=request.episodeIndices,
-                    edits_map=edits_map,
-                    progress_callback=progress_callback,
-                ),
+                lambda: exporter.export_episodes(**options, progress_callback=progress_callback),
             )
 
             # Stream progress updates
