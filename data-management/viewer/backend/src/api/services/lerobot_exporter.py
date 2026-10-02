@@ -16,9 +16,7 @@ from __future__ import annotations
 import copy
 import json
 import math
-import os
 import shutil
-import stat
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -318,8 +316,10 @@ class LeRobotExporter:
     """
     Exports episodes of a LeRobot v3.0 dataset, with edits applied, as a new LeRobot v3.0 dataset.
 
-    The output directory must be new or empty. The dataset is written to a temporary sibling
-    directory and renamed into place only when complete, so a failed export leaves nothing behind.
+    The output directory must be new or empty, and nothing appears in it until the export completes.
+    A new directory is written as a temporary sibling and renamed into place. An existing empty
+    directory, such as a mount point, is kept: the dataset is written to a hidden directory inside it
+    and moved into place. A failed export leaves nothing behind.
 
     Example:
         >>> exporter = LeRobotExporter("/data/capture/lerobot", "/data/capture-edited", dataset_id="capture--lerobot")
@@ -363,15 +363,21 @@ class LeRobotExporter:
                 raise LeRobotExportError("the output directory must be new or empty")
             episodes = self._episodes(info, episode_indices, edits_map or {})
             sizes = self._video_sizes(info, episodes)
-            self.dst_path.parent.mkdir(parents=True, exist_ok=True)
+            existing = self.dst_path.exists()
+            if not existing:
+                self.dst_path.parent.mkdir(parents=True, exist_ok=True)
+            # Staging inside an existing directory keeps it, which a mount point or a read-only parent requires.
             # A plain mkdir applies the process umask, unlike mkdtemp's fixed 0700.
-            staging = self.dst_path.parent / f".{self.dst_path.name}-{uuid4().hex}.partial"
+            staging_parent = self.dst_path if existing else self.dst_path.parent
+            staging = staging_parent / f".{self.dst_path.name}-{uuid4().hex}.partial"
             staging.mkdir()
             self._write(staging, info, episodes, sizes, started, progress_callback)
-            if self.dst_path.exists():
-                os.chmod(staging, stat.S_IMODE(self.dst_path.stat().st_mode))
-                self.dst_path.rmdir()
-            staging.rename(self.dst_path)
+            if existing:
+                for entry in staging.iterdir():
+                    entry.rename(self.dst_path / entry.name)
+                staging.rmdir()
+            else:
+                staging.rename(self.dst_path)
             staging = None
             removed = sum(
                 len({frame for frame in (episode.edits.removed_frames or set()) if 0 <= frame < episode.table.num_rows})

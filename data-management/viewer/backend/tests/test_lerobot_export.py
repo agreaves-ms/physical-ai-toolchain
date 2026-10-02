@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 from typing import Any
@@ -553,6 +554,34 @@ def test_export_root_mode_follows_the_umask_or_the_existing_directory(source: Pa
     assert stat.S_IMODE(existing.stat().st_mode) == 0o750
 
 
+def test_an_existing_empty_directory_is_kept_and_receives_the_export(source: Path) -> None:
+    output = source.parents[1] / "edited"
+    output.mkdir()
+    inode = output.stat().st_ino
+
+    _export(source, [0])
+
+    assert output.stat().st_ino == inode
+    assert (output / "meta/info.json").is_file()
+    assert [path.name for path in output.iterdir() if path.name.startswith(".")] == []
+    assert [path.name for path in source.parents[1].iterdir() if path.name.endswith(".partial")] == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="permission bits don't restrict root")
+def test_an_existing_directory_in_a_read_only_parent_receives_the_export(source: Path) -> None:
+    parent = source.parents[1] / "protected"
+    output = parent / "edited"
+    output.mkdir(parents=True)
+    parent.chmod(0o555)
+    try:
+        result = LeRobotExporter(source, output).export_episodes([0])
+    finally:
+        parent.chmod(0o755)
+
+    assert result.success, result.error
+    assert (output / "meta/info.json").is_file()
+
+
 def _break_version(source: Path) -> None:
     info = json.loads((source / "meta/info.json").read_text())
     (source / "meta/info.json").write_text(json.dumps({**info, "codebase_version": "v2.1"}))
@@ -598,19 +627,30 @@ def _shorten_video_window(source: Path) -> None:
         (_escape_camera_key, [0], None, "is not a plain name"),
     ],
 )
+@pytest.mark.parametrize("existing", [False, True], ids=["new-output", "existing-output"])
 def test_failed_exports_leave_nothing_behind(
-    source: Path, prepare: Any, episodes: list[int], edits: dict[int, EpisodeEditOperations] | None, message: str
+    source: Path,
+    prepare: Any,
+    episodes: list[int],
+    edits: dict[int, EpisodeEditOperations] | None,
+    message: str,
+    existing: bool,
 ) -> None:
     if prepare is not None:
         prepare(source)
     parent = source.parents[1]
+    output = parent / "edited"
+    if existing:
+        output.mkdir()
     before = sorted(path.name for path in parent.iterdir())
 
-    result = LeRobotExporter(source, parent / "edited").export_episodes(episodes, edits)
+    result = LeRobotExporter(source, output).export_episodes(episodes, edits)
 
     assert result.success is False
     assert message in result.error
     assert sorted(path.name for path in parent.iterdir()) == before
+    if existing:
+        assert list(output.iterdir()) == []
 
 
 def test_a_non_empty_output_directory_is_refused(source: Path) -> None:
