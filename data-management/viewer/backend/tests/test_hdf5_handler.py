@@ -438,6 +438,29 @@ class TestRecordedSubtasks:
             }
         ]
 
+    def test_hdf5_export_loads_back_with_its_cameras_and_subtasks(self, tmp_path):
+        from src.api.services.episode_edits import EpisodeEditOperations, SubtaskSegment
+        from src.api.services.hdf5_exporter import HDF5Exporter
+
+        source, output = tmp_path / "source", tmp_path / "export"
+        source.mkdir()
+        _create_hdf5_with_images(source / "episode_000000.hdf5", cameras=["top"])
+        edits = EpisodeEditOperations(
+            dataset_id="source",
+            episode_index=0,
+            subtasks=[SubtaskSegment(id="st-1", label="Reach", frame_range=(0, 4), color="#ff0000", source="manual")],
+        )
+        assert HDF5Exporter(source, output).export_episode(0, edits).success
+        handler = HDF5FormatHandler()
+        assert handler.get_loader("export", output)
+
+        episode = handler.load_episode("export", 0)
+
+        assert episode is not None
+        assert episode.meta.length == 10
+        assert episode.cameras == ["top"]
+        assert [s.label for s in episode.subtasks] == ["Reach"]
+
 
 # ---------------------------------------------------------------------------
 # Mock-based handler branch coverage
