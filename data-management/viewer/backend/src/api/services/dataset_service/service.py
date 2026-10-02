@@ -38,6 +38,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class EpisodeLoadError(Exception):
+    """The handler that owns a dataset couldn't load one of its episodes."""
+
+    def __init__(self, dataset_id: str, episode_idx: int) -> None:
+        super().__init__(f"Episode {episode_idx} of dataset '{dataset_id}' could not be loaded")
+        self.dataset_id = dataset_id
+        self.episode_idx = episode_idx
+
+
 def _validate_dataset_id(dataset_id: str) -> str:
     """Validate and return a safe dataset identifier. Raises ValueError on traversal attempts."""
     if "\\" in dataset_id or "/" in dataset_id:
@@ -630,6 +639,10 @@ class DatasetService:
         # Validate episode index if we have dataset info
         if dataset is not None and (episode_idx < 0 or episode_idx >= dataset.total_episodes):
             return None
+
+        # The handlers log why they failed; an empty episode here would look like real data.
+        if handler is not None:
+            raise EpisodeLoadError(dataset_id, episode_idx)
 
         return EpisodeData(
             meta=EpisodeMeta(
