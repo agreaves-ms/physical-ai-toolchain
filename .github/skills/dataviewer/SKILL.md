@@ -316,6 +316,7 @@ The `LanguageInstructionWidget` writes a structured payload through `PUT /api/da
 | `subtask_instructions` | Ordered subtask decomposition for hierarchical conditioning     | up to 100 entries, 1000 chars each |
 
 When a dataset task description is available the widget seeds the instruction with `source = template`; otherwise it creates a blank instruction with `source = human`. The source dropdown allows changing the value at any time.
+A LeRobot export can write the most recently saved instruction as LeRobot rows: the instruction and paraphrases as `task_aug`, and the subtask instructions as one numbered `plan` row at the first frame.
 
 ### Step 1 — Analyze trajectory data
 
@@ -472,12 +473,14 @@ The Edit Tools trajectory editor adjusts state channels per frame, labelled with
 HDF5 exports keep the recorded joint positions as `data/qpos` and add the adjustments beside them as `data/qpos_adjusted`, with `data/qpos_adjusted_mask` marking the edited rows and the adjustment list in the episode's `.meta.json`.
 Velocities, actions and the other exported arrays stay as recorded.
 
-LeRobot v3.0 sources, including sim captures, export to a new LeRobot v3.0 dataset at the output path. That path must be new or empty and outside the source.
+LeRobot v3.0 sources, including sim captures, export to a new LeRobot v3.0 dataset at the output path. That path must be new or empty and outside the source; an existing empty directory, such as a mount point, is kept.
 The export keeps `observation.state` and every other recorded feature, and adds adjustments as `adjusted.observation.state` with `adjusted.observation.state_mask`. The `adjusted.` prefix keeps both out of LeRobot policy inputs.
 Removing or inserting frames renumbers `frame_index` and `timestamp`. `dataviewer-export.json` maps every output frame to its source frame and records the edits and remapped subtasks.
 Subtasks shrink to the frames that survive the edits, and a LeRobot export also writes each one as a LeRobot `subtask` row in `language_persistent`, starting at its first output frame.
 LeRobot keeps a subtask active until the next one starts, so frames between two subtasks read as the earlier one; `dataviewer-export.json` keeps the exact ranges.
-Recorded language annotations move with the edited frames, and exported subtasks replace their `subtask` rows. Clearing **Include subtasks as LeRobot subtask annotations** in the export dialog leaves the subtasks out; a source's recorded annotations are still exported.
+Opening an export shows its subtasks in the editor: LeRobot rows run until the next one starts, and HDF5 `.subtasks.json` files keep exact ranges. Re-exporting keeps unchanged subtasks as recorded, writes changed ones in their place, and removes them when all are deleted; a saved draft takes precedence.
+Recorded language annotations move with the edited frames, apart from rows the exported subtasks or language instructions replace. Clearing **Include subtasks as LeRobot subtask annotations** in the export dialog leaves your subtask changes out; recorded annotations are still exported.
+**Include language instructions as LeRobot task phrasings and plan**, on by default for LeRobot sources, writes each episode's most recently saved language instruction as `task_aug` and `plan` rows that replace the recorded ones; `dataviewer-export.json` records whose instruction was used.
 Each export is a separate dataset. LeRobot merges datasets only when their features match, so a cropped or adjusted export won't merge with an unedited one.
 
 ## Frontend UI Structure
