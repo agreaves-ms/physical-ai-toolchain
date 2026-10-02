@@ -129,6 +129,7 @@ describe('ExportDialog', () => {
     )
     expect(startExport.mock.calls[0][0]).not.toHaveProperty('format')
     expect(startExport.mock.calls[0][0]).not.toHaveProperty('includeSubtasks')
+    expect(startExport.mock.calls[0][0]).not.toHaveProperty('includeLanguageInstructions')
   })
 
   it('says a LeRobot source exports a new LeRobot dataset', () => {
@@ -151,6 +152,30 @@ describe('ExportDialog', () => {
 
     expect(screen.getByText(/to HDF5 episode files/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/include subtask metadata/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/include language instructions/i)).toBeNull()
+  })
+
+  it('sends the language option for LeRobot sources, checked by default', async () => {
+    mockCapabilities(true)
+    const user = userEvent.setup()
+    const startExport = vi.fn()
+    vi.mocked(useExport).mockReturnValue(createUseExportReturn({ startExport }))
+
+    renderWithQuery(
+      <ExportDialog open onOpenChange={vi.fn()} datasetId="dataset-1" episodeIndices={[0]} />,
+    )
+    const option = screen.getByLabelText(
+      /include language instructions as LeRobot task phrasings and plan/i,
+    )
+    expect(option).toBeChecked()
+    await user.click(screen.getByRole('button', { name: /start export/i }))
+    await user.click(option)
+    await user.click(screen.getByRole('button', { name: /start export/i }))
+
+    expect(startExport.mock.calls.map((call) => call[0].includeLanguageInstructions)).toEqual([
+      true,
+      false,
+    ])
   })
 
   it('says a LeRobot export writes subtasks as LeRobot subtask annotations', async () => {

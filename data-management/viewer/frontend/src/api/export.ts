@@ -15,6 +15,8 @@ export interface ExportRequestWithEdits {
   outputPath: string
   applyEdits: boolean
   edits?: Record<number, EpisodeEditOperations>
+  /** For LeRobot sources, write each episode's latest saved language instruction as task_aug and plan rows */
+  includeLanguageInstructions?: boolean
 }
 
 function isRecord(payload: unknown): payload is Record<string, unknown> {

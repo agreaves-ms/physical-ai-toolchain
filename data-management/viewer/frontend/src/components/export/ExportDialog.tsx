@@ -41,6 +41,7 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
   const [outputPath, setOutputPath] = useState('/exports')
   const [applyEdits, setApplyEdits] = useState(true)
   const [includeSubtasks, setIncludeSubtasks] = useState(true)
+  const [includeLanguage, setIncludeLanguage] = useState(true)
   const returnFocusRef = useRef<HTMLElement | null>(null)
 
   const getEditOperations = useEditStore((state) => state.getEditOperations)
@@ -70,6 +71,7 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
       outputPath,
       applyEdits,
       edits: edits ? { [edits.episodeIndex]: edits } : undefined,
+      ...(capabilities?.isLerobotDataset ? { includeLanguageInstructions: includeLanguage } : {}),
     }
     startExport(request)
   }
@@ -141,6 +143,19 @@ export function ExportDialog({ open, onOpenChange, datasetId, episodeIndices }: 
                   : 'Include subtask metadata'}
               </Label>
             </div>
+
+            {capabilities?.isLerobotDataset && (
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="include-language"
+                  checked={includeLanguage}
+                  onCheckedChange={(checked) => setIncludeLanguage(checked === true)}
+                />
+                <Label htmlFor="include-language">
+                  Include language instructions as LeRobot task phrasings and plan
+                </Label>
+              </div>
+            )}
 
             <div className="text-muted-foreground space-y-1 text-sm">
               <div>Episodes to export: {episodeIndices.length}</div>
