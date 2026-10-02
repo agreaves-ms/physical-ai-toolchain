@@ -64,6 +64,8 @@ STATE_FEATURE = "observation.state"
 ADJUSTED_STATE = "adjusted.observation.state"
 ADJUSTED_STATE_MASK = "adjusted.observation.state_mask"
 PROVENANCE_FILE = "dataviewer-export.json"
+# An export into an existing directory stages here, and creating it claims the directory.
+CLAIM_DIRECTORY = ".dataviewer-export.partial"
 DATA_PATH = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 VIDEO_PATH = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 
@@ -278,6 +280,40 @@ def _inside(root: Path, relative: str) -> Path:
     return path
 
 
+def _claim(directory: Path) -> Path:
+    """Claim an existing output directory by creating its staging directory, and confirm it's still empty."""
+    claim = directory / CLAIM_DIRECTORY
+    try:
+        claim.mkdir()
+    except FileExistsError as error:
+        raise LeRobotExportError("another export is writing to this directory") from error
+    # Another export may have filled the directory and released its claim since the first emptiness check.
+    if any(entry.name != CLAIM_DIRECTORY for entry in directory.iterdir()):
+        claim.rmdir()
+        raise LeRobotExportError("the output directory must be new or empty")
+    return claim
+
+
+def _move_into(staging: Path, directory: Path) -> None:
+    """Move staged entries into the directory without replacing any, removing those moved if one can't be."""
+    moved: list[Path] = []
+    try:
+        for entry in staging.iterdir():
+            target = directory / entry.name
+            if target.exists() or target.is_symlink():
+                raise LeRobotExportError(f"{entry.name!r} already exists in the output directory")
+            entry.rename(target)
+            moved.append(target)
+    except Exception:
+        for target in moved:
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink(missing_ok=True)
+        raise
+    staging.rmdir()
+
+
 def _interpolate(matrix: NDArray[np.float64], plan: list[PlannedFrame]) -> NDArray[np.float64]:
     """Lay out source rows in plan order, blending inserted rows between their kept neighbors."""
     rows = matrix[[frame.source for frame in plan]].copy()
@@ -371,18 +407,17 @@ class LeRobotExporter:
             episodes = self._episodes(info, episode_indices, edits_map or {}, language or {})
             sizes = self._video_sizes(info, episodes)
             existing = self.dst_path.exists()
-            if not existing:
-                self.dst_path.parent.mkdir(parents=True, exist_ok=True)
             # Staging inside an existing directory keeps it, which a mount point or a read-only parent requires.
             # A plain mkdir applies the process umask, unlike mkdtemp's fixed 0700.
-            staging_parent = self.dst_path if existing else self.dst_path.parent
-            staging = staging_parent / f".{self.dst_path.name}-{uuid4().hex}.partial"
-            staging.mkdir()
+            if existing:
+                staging = _claim(self.dst_path)
+            else:
+                self.dst_path.parent.mkdir(parents=True, exist_ok=True)
+                staging = self.dst_path.parent / f".{self.dst_path.name}-{uuid4().hex}.partial"
+                staging.mkdir()
             self._write(staging, info, episodes, sizes, started, progress_callback)
             if existing:
-                for entry in staging.iterdir():
-                    entry.rename(self.dst_path / entry.name)
-                staging.rmdir()
+                _move_into(staging, self.dst_path)
             else:
                 staging.rename(self.dst_path)
             staging = None

@@ -18,7 +18,13 @@ import pytest
 from src.api.models.datasources import FrameInsertion
 from src.api.services.episode_edits import EpisodeEditOperations, SubtaskSegment, TrajectoryAdjustment
 from src.api.services.image_transform import CropRegion, ImageTransform, ResizeDimensions
-from src.api.services.lerobot_exporter import ADJUSTED_STATE, ADJUSTED_STATE_MASK, PROVENANCE_FILE, LeRobotExporter
+from src.api.services.lerobot_exporter import (
+    ADJUSTED_STATE,
+    ADJUSTED_STATE_MASK,
+    CLAIM_DIRECTORY,
+    PROVENANCE_FILE,
+    LeRobotExporter,
+)
 from src.api.services.lerobot_language import LanguageInstruction
 
 FPS = 10
@@ -713,3 +719,64 @@ def test_a_non_empty_output_directory_is_refused(source: Path) -> None:
     assert result.success is False
     assert "new or empty" in result.error
     assert [path.name for path in output.iterdir()] == ["keep.txt"]
+
+
+def test_a_failure_while_moving_into_an_existing_directory_leaves_it_empty(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = source.parents[1] / "edited"
+    output.mkdir()
+    rename = Path.rename
+    moved: list[str] = []
+
+    def fail_second_move(self: Path, target: Path) -> Path:
+        if Path(target).parent == output:
+            moved.append(self.name)
+            if len(moved) == 2:
+                raise OSError("simulated rename failure")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fail_second_move)
+
+    result = LeRobotExporter(source, output).export_episodes([0])
+
+    assert result.success is False
+    assert "simulated rename failure" in result.error
+    assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize("meanwhile", ["another export finished", "another export holds the claim"])
+def test_an_export_that_loses_the_race_for_an_existing_directory_leaves_it_alone(
+    source: Path, monkeypatch: pytest.MonkeyPatch, meanwhile: str
+) -> None:
+    output = source.parents[1] / "edited"
+    output.mkdir()
+    video_sizes = LeRobotExporter._video_sizes
+    paused = False
+
+    # Both exports pass the emptiness check; the other one acts while this one is paused before its claim.
+    def pause_before_the_claim(self: LeRobotExporter, *args: Any) -> Any:
+        nonlocal paused
+        if not paused:
+            paused = True
+            if meanwhile == "another export finished":
+                other = LeRobotExporter(source, output, dataset_id="winner").export_episodes([1])
+                assert other.success, other.error
+            else:
+                (output / CLAIM_DIRECTORY).mkdir()
+        return video_sizes(self, *args)
+
+    monkeypatch.setattr(LeRobotExporter, "_video_sizes", pause_before_the_claim)
+
+    result = LeRobotExporter(source, output, dataset_id="loser").export_episodes([0])
+
+    assert paused
+    assert result.success is False
+    if meanwhile == "another export finished":
+        assert "new or empty" in result.error
+        assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "winner"
+        assert sorted(path.name for path in output.iterdir()) == ["data", PROVENANCE_FILE, "meta", "videos"]
+    else:
+        assert "another export is writing to this directory" in result.error
+        assert [path.name for path in output.iterdir()] == [CLAIM_DIRECTORY]
+        assert list((output / CLAIM_DIRECTORY).iterdir()) == []
