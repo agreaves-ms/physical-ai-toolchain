@@ -27,6 +27,9 @@ const hoisted = vi.hoisted(() => {
     autoLoop: false,
     subtasks: [{ id: 'subtask-1', frameRange: [2, 6] as [number, number] }],
     recordedSubtasks: [] as RecordedSubtask[],
+    editDatasetId: null as string | null,
+    editEpisodeIndex: null as number | null,
+    editPrincipalScopeId: null as string | null,
   }
 
   const clearDiagnosticEvents = vi.fn((channel?: string) => {
@@ -73,6 +76,7 @@ const hoisted = vi.hoisted(() => {
       kind: 'pause',
     })),
     initializeEdit: vi.fn(),
+    adoptRecordedSubtasks: vi.fn(),
     resetEdits: vi.fn(),
     saveEpisodeDraft: vi.fn(),
     setCurrentFrame: vi.fn(),
@@ -92,6 +96,7 @@ export const mockEnableDiagnostics = hoisted.enableDiagnostics
 export const mockRecordDiagnosticEvent = hoisted.recordDiagnosticEvent
 export const testState = hoisted.state
 export const mockInitializeEdit = hoisted.initializeEdit
+export const mockAdoptRecordedSubtasks = hoisted.adoptRecordedSubtasks
 export const mockResetEdits = hoisted.resetEdits
 export const mockSaveEpisodeDraft = hoisted.saveEpisodeDraft
 export const mockSetCurrentFrame = hoisted.setCurrentFrame
@@ -340,10 +345,12 @@ vi.mock('@/stores', () => ({
       addSubtask: vi.fn(),
       removedFrames: new Set<number>(),
       initializeEdit: hoisted.initializeEdit,
+      adoptRecordedSubtasks: hoisted.adoptRecordedSubtasks,
       clearTransforms: vi.fn(),
       saveEpisodeDraft: hoisted.saveEpisodeDraft,
-      datasetId: null,
-      episodeIndex: null,
+      datasetId: hoisted.state.editDatasetId,
+      episodeIndex: hoisted.state.editEpisodeIndex,
+      principalScopeId: hoisted.state.editPrincipalScopeId,
       globalTransform: null,
     }),
   useEpisodeStore: (selector: (state: unknown) => unknown) =>
@@ -406,7 +413,11 @@ export function setupAnnotationWorkspaceTestCase() {
   testState.autoLoop = false
   testState.subtasks = [{ id: 'subtask-1', frameRange: [2, 6] }]
   testState.recordedSubtasks = []
+  testState.editDatasetId = null
+  testState.editEpisodeIndex = null
+  testState.editPrincipalScopeId = null
   mockInitializeEdit.mockClear()
+  mockAdoptRecordedSubtasks.mockClear()
 
   mockSaveEpisodeLabels.mockReset()
   mockSetCurrentFrame.mockReset()
