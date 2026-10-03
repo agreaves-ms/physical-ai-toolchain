@@ -8,6 +8,7 @@ HDF5 exporter mocked out.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -382,6 +383,40 @@ class TestExportEpisodes:
         )
         assert resp.status_code == 500
         assert "write failed" in resp.json()["detail"]
+
+    def test_the_exporter_runs_off_the_event_loop(
+        self,
+        client: TestClient,
+        override_service,
+        dataset_layout,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from src.api.routers import export as export_router
+
+        _, _dataset, output_dir = dataset_layout
+        threads: dict[str, int] = {}
+        export_options = export_router._export_options
+
+        async def recording_options(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            threads["handler"] = threading.get_ident()
+            return await export_options(*args, **kwargs)
+
+        def recording_export(**_options: Any) -> MagicMock:
+            threads["exporter"] = threading.get_ident()
+            return _make_export_result()
+
+        monkeypatch.setattr(export_router, "_export_options", recording_options)
+        instance = MagicMock()
+        instance.export_episodes.side_effect = recording_export
+        _patch_exporter(monkeypatch, MagicMock(return_value=instance))
+
+        resp = client.post(
+            "/api/datasets/ds-1/export",
+            json={"episodeIndices": [0], "outputPath": str(output_dir), "applyEdits": False},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert threads["exporter"] != threads["handler"]
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, FiniteFloat, NonNegativeInt
 
@@ -301,7 +302,7 @@ async def export_episodes(
     try:
         exporter = _exporter(lerobot, dataset_id, dataset_path, output_path)
         options = await _export_options(dataset_id, request, lerobot, annotations)
-        result = exporter.export_episodes(**options)
+        result = await run_in_threadpool(exporter.export_episodes, **options)
 
         return _public_export_result(result)
 
