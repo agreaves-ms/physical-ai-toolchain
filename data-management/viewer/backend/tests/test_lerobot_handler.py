@@ -122,9 +122,10 @@ class TestRecordedSubtasks:
     """Subtask rows recorded in ``language_persistent`` come back with the episode."""
 
     def test_recorded_subtask_rows_come_back_as_episode_subtasks(self, tmp_path):
-        from .test_lerobot_export import _add_language, _row, _write_source
+        from .lerobot_sources import write_source
+        from .test_lerobot_export import _add_language, _row
 
-        source = _write_source(tmp_path / "capture/lerobot")
+        source = write_source(tmp_path / "capture/lerobot")
         rows = [
             _row("subtask", "Reach", 0.0),
             _row("plan", "1. Reach\n2. Grasp", 0.0),

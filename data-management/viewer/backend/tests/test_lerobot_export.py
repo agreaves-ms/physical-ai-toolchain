@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -16,145 +18,37 @@ import pyarrow.parquet as pq
 import pytest
 
 from src.api.models.datasources import FrameInsertion
+from src.api.services import lerobot_exporter
 from src.api.services.episode_edits import EpisodeEditOperations, SubtaskSegment, TrajectoryAdjustment
 from src.api.services.image_transform import CropRegion, ImageTransform, ResizeDimensions
 from src.api.services.lerobot_exporter import (
     ADJUSTED_STATE,
     ADJUSTED_STATE_MASK,
     CLAIM_DIRECTORY,
+    LOCK_FILE,
     PROVENANCE_FILE,
     LeRobotExporter,
 )
 from src.api.services.lerobot_language import LanguageInstruction
 
-FPS = 10
-WIDTH, HEIGHT = 32, 24
-CAMERA = "observation.images.front"
-LENGTHS = (12, 8)
+from .lerobot_sources import (
+    CAMERA,
+    FPS,
+    LENGTHS,
+    frame_gray,
+    frame_state,
+    hold_lock,
+    stop_export,
+    write_source,
+)
+
 STATS_KEYS = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
-
-
-def _gray(episode: int, frame: int) -> int:
-    return 40 + 15 * frame if episode == 0 else 200 - 15 * frame
-
-
-def _state(episode: int, frame: int) -> list[float]:
-    return [float(episode), float(frame), float(episode * 100 + frame)]
-
-
-def _write_source(root: Path, vector: pa.DataType | None = None) -> Path:
-    """Write a two-episode v3.0 dataset whose frames and rows encode their episode and frame."""
-    (root / "meta/episodes/chunk-000").mkdir(parents=True)
-    (root / "data/chunk-000").mkdir(parents=True)
-    video = root / f"videos/{CAMERA}/chunk-000/file-000.mp4"
-    video.parent.mkdir(parents=True)
-    with av.open(str(video), "w") as container:
-        stream = container.add_stream("libx264", rate=FPS, options={"g": "2", "crf": "18"})
-        stream.width, stream.height, stream.pix_fmt = WIDTH, HEIGHT, "yuv420p"
-        for episode, length in enumerate(LENGTHS):
-            for frame in range(length):
-                image = np.full((HEIGHT, WIDTH, 3), _gray(episode, frame), dtype=np.uint8)
-                for packet in stream.encode(av.VideoFrame.from_ndarray(image, format="rgb24")):
-                    container.mux(packet)
-        for packet in stream.encode():
-            container.mux(packet)
-
-    rows: dict[str, list[Any]] = {name: [] for name in ("state", "phase", "flag", "timestamp", "frame", "episode")}
-    episodes = []
-    offset = 0
-    for episode, length in enumerate(LENGTHS):
-        for frame in range(length):
-            rows["state"].append(_state(episode, frame))
-            rows["phase"].append(frame // 4)
-            rows["flag"].append(frame % 2 == 0)
-            rows["timestamp"].append(frame / FPS)
-            rows["frame"].append(frame)
-            rows["episode"].append(episode)
-        episodes.append(
-            {
-                "episode_index": episode,
-                "tasks": ["pick the part"],
-                "length": length,
-                "data/chunk_index": 0,
-                "data/file_index": 0,
-                "dataset_from_index": offset,
-                "dataset_to_index": offset + length,
-                f"videos/{CAMERA}/chunk_index": 0,
-                f"videos/{CAMERA}/file_index": 0,
-                f"videos/{CAMERA}/from_timestamp": offset / FPS,
-                f"videos/{CAMERA}/to_timestamp": (offset + length) / FPS,
-                "meta/episodes/chunk_index": 0,
-                "meta/episodes/file_index": 0,
-                "stats/observation.state/count": [length],
-            }
-        )
-        offset += length
-    vector = vector or pa.list_(pa.float32(), 3)
-    total = len(rows["frame"])
-    data = pa.table(
-        {
-            "observation.state": pa.array(rows["state"], type=vector),
-            "action": pa.array([[2 * value for value in state] for state in rows["state"]], type=vector),
-            "observation.phase": pa.array(rows["phase"], type=pa.int64()),
-            "observation.flag": pa.array(rows["flag"], type=pa.bool_()),
-            "timestamp": pa.array(rows["timestamp"], type=pa.float32()),
-            "frame_index": pa.array(rows["frame"], type=pa.int64()),
-            "episode_index": pa.array(rows["episode"], type=pa.int64()),
-            "index": pa.array(range(total), type=pa.int64()),
-            "task_index": pa.array([0] * total, type=pa.int64()),
-        }
-    )
-    pq.write_table(data, root / "data/chunk-000/file-000.parquet")
-    pq.write_table(pa.Table.from_pylist(episodes), root / "meta/episodes/chunk-000/file-000.parquet")
-    pq.write_table(pa.table({"task_index": [0], "task": ["pick the part"]}), root / "meta/tasks.parquet")
-    scalar = {"shape": [1], "names": None}
-    names = ["x", "y", "z"]
-    info = {
-        "codebase_version": "v3.0",
-        "robot_type": "fixture",
-        "total_episodes": len(LENGTHS),
-        "total_frames": total,
-        "total_tasks": 1,
-        "chunks_size": 1000,
-        "fps": FPS,
-        "splits": {"train": f"0:{len(LENGTHS)}"},
-        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
-        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
-        "features": {
-            CAMERA: {
-                "dtype": "video",
-                "shape": [HEIGHT, WIDTH, 3],
-                "names": ["height", "width", "channels"],
-                "info": {
-                    "video.height": HEIGHT,
-                    "video.width": WIDTH,
-                    "video.codec": "h264",
-                    "video.pix_fmt": "yuv420p",
-                    "video.fps": FPS,
-                    "video.channels": 3,
-                    "video.g": 2,
-                    "video.crf": 18,
-                    "has_audio": False,
-                },
-            },
-            "observation.state": {"dtype": "float32", "shape": [3], "names": names},
-            "action": {"dtype": "float32", "shape": [3], "names": names},
-            "observation.phase": {"dtype": "int64", **scalar},
-            "observation.flag": {"dtype": "bool", **scalar},
-            "timestamp": {"dtype": "float32", **scalar},
-            "frame_index": {"dtype": "int64", **scalar},
-            "episode_index": {"dtype": "int64", **scalar},
-            "index": {"dtype": "int64", **scalar},
-            "task_index": {"dtype": "int64", **scalar},
-        },
-    }
-    (root / "meta/info.json").write_text(json.dumps(info))
-    return root
+DATASET_ENTRIES = ["data", PROVENANCE_FILE, "meta", "videos"]
 
 
 @pytest.fixture
 def source(tmp_path: Path) -> Path:
-    return _write_source(tmp_path / "datasets/capture/lerobot")
+    return write_source(tmp_path / "datasets/capture/lerobot")
 
 
 def _export(source: Path, episodes: list[int], edits: dict[int, EpisodeEditOperations] | None = None) -> Path:
@@ -254,12 +148,12 @@ def test_removed_frames_renumber_the_timeline_and_leave_the_source_unchanged(sou
     assert data.column("index").to_pylist() == list(range(10))
     assert data.column("episode_index").to_pylist() == [0] * 10
     np.testing.assert_allclose(data.column("timestamp").to_numpy(), np.arange(10) / FPS, atol=1e-6)
-    assert data.column("observation.state").to_pylist() == [_state(0, frame) for frame in kept]
+    assert data.column("observation.state").to_pylist() == [frame_state(0, frame) for frame in kept]
     frames = _decode(_video(output))
     assert len(frames) == 10
     for (time, image), (position, frame) in zip(frames, enumerate(kept), strict=True):
         assert abs(time - position / FPS) < 1e-4
-        assert abs(float(image.mean()) - _gray(0, frame)) < 4
+        assert abs(float(image.mean()) - frame_gray(0, frame)) < 4
     info = _info(output)
     assert (info["total_episodes"], info["total_frames"], info["splits"]) == (1, 10, {"train": "0:1"})
     assert not {"language_persistent", "language_events"} & (set(data.column_names) | set(info["features"]))
@@ -286,15 +180,15 @@ def test_two_episode_exports_carry_offsets_ranges_and_videos(source: Path) -> No
     assert data.column("episode_index").to_pylist() == [0] * 7 + [1] * 12
     assert data.column("frame_index").to_pylist() == list(range(7)) + list(range(12))
     expected = [(1, frame) for frame in range(1, 8)] + [(0, frame) for frame in range(12)]
-    assert data.column("observation.state").to_pylist() == [_state(*pair) for pair in expected]
+    assert data.column("observation.state").to_pylist() == [frame_state(*pair) for pair in expected]
     frames = _decode(_video(output))
     assert len(frames) == 19
     for (episode, (start, _end)), first in zip(enumerate(windows), (0, 7), strict=True):
         time, image = frames[first]
         assert abs(time - start) < 1e-4
-        assert abs(float(image.mean()) - _gray(*expected[first])) < 4, episode
+        assert abs(float(image.mean()) - frame_gray(*expected[first])) < 4, episode
     for (_time, image), pair in zip(frames, expected, strict=True):
-        assert abs(float(image.mean()) - _gray(*pair)) < 4
+        assert abs(float(image.mean()) - frame_gray(*pair)) < 4
 
 
 def test_inserted_frames_interpolate_floats_and_hold_other_features(source: Path) -> None:
@@ -306,12 +200,12 @@ def test_inserted_frames_interpolate_floats_and_hold_other_features(source: Path
     assert data.num_rows == 12
     inserted = data.slice(5, 1).to_pylist()[0]
     np.testing.assert_allclose(
-        inserted["observation.state"], 0.75 * np.array(_state(0, 4)) + 0.25 * np.array(_state(0, 6))
+        inserted["observation.state"], 0.75 * np.array(frame_state(0, 4)) + 0.25 * np.array(frame_state(0, 6))
     )
     assert inserted["observation.phase"] == 1
     assert inserted["observation.flag"] is True
     _time, image = _decode(_video(output))[5]
-    assert abs(float(image.mean()) - (0.75 * _gray(0, 4) + 0.25 * _gray(0, 6))) < 4
+    assert abs(float(image.mean()) - (0.75 * frame_gray(0, 4) + 0.25 * frame_gray(0, 6))) < 4
     provenance = json.loads((output / PROVENANCE_FILE).read_text())["episodes"][0]
     assert provenance["frame_sources"][4:7] == [4, None, 6]
     assert provenance["edits"]["inserted_frames"] == [{"after_frame_index": 4, "interpolation_factor": 0.25}]
@@ -332,7 +226,7 @@ def test_crop_and_resize_change_the_camera_video_and_feature_shape(source: Path)
     assert frames[0][1].shape == (6, 8, 3)
 
 
-def test_trajectory_adjustments_add_derived_state_beside_the_recorded_state(source: Path) -> None:
+def test_trajectory_adjustments_add_derived_state_beside_the_recordedframe_state(source: Path) -> None:
     adjustments = [
         TrajectoryAdjustment(frame_index=2, channel_deltas={0: 0.5}),
         TrajectoryAdjustment(frame_index=7, channel_values={2: -1.0}),
@@ -345,7 +239,7 @@ def test_trajectory_adjustments_add_derived_state_beside_the_recorded_state(sour
     adjusted = np.array(data.column(ADJUSTED_STATE).to_pylist())
     mask = np.array(data.column(ADJUSTED_STATE_MASK).to_pylist())
     kept = [0, *range(2, 12)]
-    np.testing.assert_allclose(recorded, [_state(0, frame) for frame in kept])
+    np.testing.assert_allclose(recorded, [frame_state(0, frame) for frame in kept])
     assert mask.tolist() == [frame in {2, 7} for frame in kept]
     np.testing.assert_allclose(adjusted[~mask], recorded[~mask])
     np.testing.assert_allclose(adjusted[1], [0.5, 2.0, 2.0])
@@ -567,14 +461,14 @@ def test_writes_use_standard_paths_even_when_source_templates_point_elsewhere(so
 
 
 def test_variable_length_vectors_interpolate_and_keep_their_list_type(tmp_path: Path) -> None:
-    source = _write_source(tmp_path / "datasets/capture/lerobot", vector=pa.list_(pa.float32()))
+    source = write_source(tmp_path / "datasets/capture/lerobot", vector=pa.list_(pa.float32()))
     insertion = [FrameInsertion(after_frame_index=4, interpolation_factor=0.5)]
 
     output = _export(source, [0], _edits(0, inserted_frames=insertion))
 
     data = _data(output)
     assert data.schema.field("observation.state").type == pa.list_(pa.float32())
-    expected = 0.5 * np.array(_state(0, 4)) + 0.5 * np.array(_state(0, 5))
+    expected = 0.5 * np.array(frame_state(0, 4)) + 0.5 * np.array(frame_state(0, 5))
     np.testing.assert_allclose(data.column("observation.state")[5].as_py(), expected)
     stats = json.loads((output / "meta/stats.json").read_text())
     assert stats["observation.state"]["count"] == [13]
@@ -721,11 +615,30 @@ def test_a_non_empty_output_directory_is_refused(source: Path) -> None:
     assert [path.name for path in output.iterdir()] == ["keep.txt"]
 
 
-def test_a_failure_while_moving_into_an_existing_directory_leaves_it_empty(
-    source: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def held_locks() -> Iterator[list[int]]:
+    """Descriptors of locks the test holds as another export would, closed when the test ends."""
+    held: list[int] = []
+    yield held
+    for fd in held:
+        os.close(fd)
+
+
+def _stage_a_claim(output: Path) -> None:
+    staged = output / CLAIM_DIRECTORY / "dataset"
+    staged.mkdir(parents=True)
+    (staged / "staged.bin").write_bytes(b"staged")
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["new-output", "existing-output"])
+def test_a_failure_while_moving_into_the_output_leaves_nothing_behind(
+    source: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
 ) -> None:
-    output = source.parents[1] / "edited"
-    output.mkdir()
+    parent = source.parents[1]
+    output = parent / "edited"
+    if existing:
+        output.mkdir()
+    before = sorted(path.name for path in parent.iterdir())
     rename = Path.rename
     moved: list[str] = []
 
@@ -742,20 +655,22 @@ def test_a_failure_while_moving_into_an_existing_directory_leaves_it_empty(
 
     assert result.success is False
     assert "simulated rename failure" in result.error
-    assert list(output.iterdir()) == []
+    assert sorted(path.name for path in parent.iterdir()) == before
+    if existing:
+        assert list(output.iterdir()) == []
 
 
-@pytest.mark.parametrize("meanwhile", ["another export finished", "another export holds the claim"])
+@pytest.mark.parametrize("meanwhile", ["another export finished", "another export holds the lock"])
 def test_an_export_that_loses_the_race_for_an_existing_directory_leaves_it_alone(
-    source: Path, monkeypatch: pytest.MonkeyPatch, meanwhile: str
+    source: Path, monkeypatch: pytest.MonkeyPatch, held_locks: list[int], meanwhile: str
 ) -> None:
     output = source.parents[1] / "edited"
     output.mkdir()
     video_sizes = LeRobotExporter._video_sizes
     paused = False
 
-    # Both exports pass the emptiness check; the other one acts while this one is paused before its claim.
-    def pause_before_the_claim(self: LeRobotExporter, *args: Any) -> Any:
+    # Both exports pass the emptiness check; the other one acts while this one is paused before it locks.
+    def pause_before_locking(self: LeRobotExporter, *args: Any) -> Any:
         nonlocal paused
         if not paused:
             paused = True
@@ -763,10 +678,11 @@ def test_an_export_that_loses_the_race_for_an_existing_directory_leaves_it_alone
                 other = LeRobotExporter(source, output, dataset_id="winner").export_episodes([1])
                 assert other.success, other.error
             else:
-                (output / CLAIM_DIRECTORY).mkdir()
+                held_locks.append(hold_lock(output))
+                _stage_a_claim(output)
         return video_sizes(self, *args)
 
-    monkeypatch.setattr(LeRobotExporter, "_video_sizes", pause_before_the_claim)
+    monkeypatch.setattr(LeRobotExporter, "_video_sizes", pause_before_locking)
 
     result = LeRobotExporter(source, output, dataset_id="loser").export_episodes([0])
 
@@ -775,8 +691,95 @@ def test_an_export_that_loses_the_race_for_an_existing_directory_leaves_it_alone
     if meanwhile == "another export finished":
         assert "new or empty" in result.error
         assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "winner"
-        assert sorted(path.name for path in output.iterdir()) == ["data", PROVENANCE_FILE, "meta", "videos"]
+        assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
     else:
         assert "another export is writing to this directory" in result.error
-        assert [path.name for path in output.iterdir()] == [CLAIM_DIRECTORY]
-        assert list((output / CLAIM_DIRECTORY).iterdir()) == []
+        assert sorted(path.name for path in output.iterdir()) == sorted([CLAIM_DIRECTORY, LOCK_FILE])
+        assert (output / CLAIM_DIRECTORY / "dataset/staged.bin").read_bytes() == b"staged"
+        assert os.path.samestat(os.stat(output / LOCK_FILE), os.fstat(held_locks[0]))
+
+
+@pytest.mark.parametrize("stop", ["before publishing"])
+def test_the_next_export_cleans_up_after_a_hard_stop(source: Path, stop: str) -> None:
+    output = source.parents[1] / "edited"
+    stop_export(source, output, stop)
+    assert (output / CLAIM_DIRECTORY).is_dir()
+
+    result = LeRobotExporter(source, output, dataset_id="retry").export_episodes([1])
+
+    assert result.success, result.error
+    assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
+    assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "retry"
+
+
+@pytest.mark.parametrize("peer", [False, True], ids=["alone", "peer-holds-the-lock"])
+@pytest.mark.parametrize("existing", [False, True], ids=["new-output", "existing-output"])
+def test_an_export_that_cannot_take_the_lock_removes_nothing(
+    source: Path, monkeypatch: pytest.MonkeyPatch, held_locks: list[int], existing: bool, peer: bool
+) -> None:
+    output = source.parents[1] / "edited"
+    if existing:
+        output.mkdir()
+    try_lock = lerobot_exporter._try_lock
+    seen: dict[str, os.stat_result] = {}
+
+    # Export A created the lock file; a peer may lock that same file and start staging before A's attempt fails.
+    def fail_to_lock(fd: int) -> bool:
+        monkeypatch.setattr(lerobot_exporter, "_try_lock", try_lock)
+        if peer:
+            held_locks.append(hold_lock(output))
+            _stage_a_claim(output)
+            seen["output"] = output.stat()
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(lerobot_exporter, "_try_lock", fail_to_lock)
+
+    failed = LeRobotExporter(source, output, dataset_id="a").export_episodes([0])
+
+    assert failed.success is False
+    assert "can't be locked" in failed.error
+    if peer:
+        assert os.path.samestat(os.stat(output / LOCK_FILE), os.fstat(held_locks[0]))
+        assert os.path.samestat(output.stat(), seen["output"])
+        assert (output / CLAIM_DIRECTORY / "dataset/staged.bin").read_bytes() == b"staged"
+        excluded = LeRobotExporter(source, output, dataset_id="c").export_episodes([0])
+        assert excluded.success is False
+        assert "another export is writing to this directory" in excluded.error
+        os.close(held_locks.pop())
+    else:
+        assert [path.name for path in output.iterdir()] == [LOCK_FILE]
+
+    retried = LeRobotExporter(source, output, dataset_id="c").export_episodes([0])
+
+    assert retried.success, retried.error
+    assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
+
+
+@pytest.mark.parametrize("held", [False, True], ids=["replacement-free", "replacement-held"])
+def test_an_export_whose_lock_file_is_replaced_locks_the_current_one(
+    source: Path, monkeypatch: pytest.MonkeyPatch, held_locks: list[int], held: bool
+) -> None:
+    output = source.parents[1] / "edited"
+    output.mkdir()
+    try_lock = lerobot_exporter._try_lock
+
+    # The previous holder removes the lock file after this export opened it; another export may lock a new one.
+    def replace_then_lock(fd: int) -> bool:
+        monkeypatch.setattr(lerobot_exporter, "_try_lock", try_lock)
+        (output / LOCK_FILE).unlink()
+        if held:
+            held_locks.append(hold_lock(output))
+        return try_lock(fd)
+
+    monkeypatch.setattr(lerobot_exporter, "_try_lock", replace_then_lock)
+
+    result = LeRobotExporter(source, output).export_episodes([0])
+
+    if held:
+        assert result.success is False
+        assert "another export is writing to this directory" in result.error
+        assert [path.name for path in output.iterdir()] == [LOCK_FILE]
+        assert os.path.samestat(os.stat(output / LOCK_FILE), os.fstat(held_locks[0]))
+    else:
+        assert result.success, result.error
+        assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES

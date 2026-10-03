@@ -14,17 +14,20 @@ dataset statistics are recomputed.
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import errno
 import json
 import math
+import os
 import shutil
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import av
 import numpy as np
@@ -64,11 +67,15 @@ STATE_FEATURE = "observation.state"
 ADJUSTED_STATE = "adjusted.observation.state"
 ADJUSTED_STATE_MASK = "adjusted.observation.state_mask"
 PROVENANCE_FILE = "dataviewer-export.json"
-# An export into an existing directory stages here, and creating it claims the directory.
+# An export locks its destination through this file before creating anything else there, and holds the lock
+# until it's done. Only the lock holder creates the claim, so a claim found under the lock is a stopped export's.
+LOCK_FILE = ".dataviewer-export.lock"
 CLAIM_DIRECTORY = ".dataviewer-export.partial"
 DATA_PATH = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 VIDEO_PATH = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 
+_STAGING = "dataset"
+_LOCK_ATTEMPTS = 3
 _SUPPORTED_VERSION = "v3.0"
 _TIMELINE = ("timestamp", "frame_index", "episode_index", "index")
 _STATS_DTYPES = {"float16", "float32", "float64", "int8", "int16", "int32", "int64", "uint8", "uint16", "bool"}
@@ -89,6 +96,47 @@ _IMAGE_STATS_SIZE = 150
 
 class LeRobotExportError(ExportError):
     """Exception raised for LeRobot export failures."""
+
+
+if sys.platform == "win32":
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        """Lock the file without waiting, returning ``False`` while another export holds it."""
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EDEADLOCK):
+                return False
+            raise
+        return True
+
+    def _release_lock(fd: int, path: Path) -> None:
+        """Unlock and close, then remove the lock file unless another export has it open."""
+        try:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> bool:
+        """Lock the file without waiting, returning ``False`` while another export holds it."""
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+    def _release_lock(fd: int, path: Path) -> None:
+        """Remove the lock file while still holding it, then close it."""
+        try:
+            path.unlink(missing_ok=True)
+        finally:
+            os.close(fd)
 
 
 @dataclass
@@ -280,18 +328,70 @@ def _inside(root: Path, relative: str) -> Path:
     return path
 
 
-def _claim(directory: Path) -> Path:
-    """Claim an existing output directory by creating its staging directory, and confirm it's still empty."""
-    claim = directory / CLAIM_DIRECTORY
+def admits_export(directory: Path) -> bool:
+    """Return whether a LeRobot export may go on to lock ``directory``.
+
+    A missing or empty directory qualifies, and so does one holding only an export's lock file or holding a
+    claim: the export that gets the lock then recovers what a stopped export left, or refuses. Anything else,
+    without a claim, rules the directory out.
+    """
+    if not directory.exists():
+        return True
+    if not directory.is_dir():
+        return False
+    names = {entry.name for entry in directory.iterdir()}
+    return CLAIM_DIRECTORY in names or names <= {LOCK_FILE}
+
+
+def _make_destination(directory: Path) -> bool:
+    """Create the destination if it's missing, returning whether this export created it."""
+    if directory.is_dir():
+        return False
     try:
-        claim.mkdir()
-    except FileExistsError as error:
-        raise LeRobotExportError("another export is writing to this directory") from error
-    # Another export may have filled the directory and released its claim since the first emptiness check.
-    if any(entry.name != CLAIM_DIRECTORY for entry in directory.iterdir()):
-        claim.rmdir()
-        raise LeRobotExportError("the output directory must be new or empty")
-    return claim
+        directory.mkdir(parents=True)
+    except FileExistsError:
+        if directory.is_dir():
+            return False
+        raise LeRobotExportError("the output directory must be new or empty") from None
+    return True
+
+
+def _lock(directory: Path) -> int:
+    """Lock the destination through its lock file and return the descriptor that holds the lock.
+
+    An export that doesn't get the lock closes the file without removing it, even one it created,
+    because another export may hold the lock on that same file.
+    """
+    path = directory / LOCK_FILE
+    for _ in range(_LOCK_ATTEMPTS):
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+        except OSError as error:
+            raise LeRobotExportError(f"the output directory can't be locked: {error}") from error
+        try:
+            locked = _try_lock(fd)
+        except OSError as error:
+            os.close(fd)
+            raise LeRobotExportError(f"the output directory can't be locked: {error}") from error
+        if not locked:
+            os.close(fd)
+            raise LeRobotExportError("another export is writing to this directory")
+        # The previous holder may have removed the file after this export opened it.
+        try:
+            current = os.stat(path)
+        except FileNotFoundError:
+            current = None
+        if current is not None and os.path.samestat(current, os.fstat(fd)):
+            return fd
+        os.close(fd)
+    raise LeRobotExportError("another export is writing to this directory")
+
+
+def _recover(directory: Path) -> None:
+    """Remove what an export that stopped partway left in a directory this export has locked."""
+    claim = directory / CLAIM_DIRECTORY
+    if claim.is_dir() and not claim.is_symlink():
+        shutil.rmtree(claim)
 
 
 def _move_into(staging: Path, directory: Path) -> None:
@@ -357,10 +457,11 @@ class LeRobotExporter:
     """
     Exports episodes of a LeRobot v3.0 dataset, with edits applied, as a new LeRobot v3.0 dataset.
 
-    The output directory must be new or empty, and nothing appears in it until the export completes.
-    A new directory is written as a temporary sibling and renamed into place. An existing empty
-    directory, such as a mount point, is kept: the dataset is written to a hidden directory inside it
-    and moved into place. A failed export leaves nothing behind.
+    The output directory must be new or empty. The export locks it before writing, stages the dataset in a
+    hidden claim inside it and then moves the dataset into place, so an existing directory, such as a mount
+    point, is kept and nothing is written beside it. A second export to the directory fails while the lock is
+    held, a failed export removes what it created, and the next export cleans up after one that stopped
+    partway.
 
     Example:
         >>> exporter = LeRobotExporter("/data/capture/lerobot", "/data/capture-edited", dataset_id="capture--lerobot")
@@ -393,7 +494,9 @@ class LeRobotExporter:
             ExportResult with the dataset directory and aggregate statistics.
         """
         started = datetime.now(UTC)
-        staging: Path | None = None
+        lock: int | None = None
+        claim: Path | None = None
+        created = published = False
         try:
             info = self.loader.get_dataset_info()
             if info.codebase_version != _SUPPORTED_VERSION:
@@ -402,25 +505,23 @@ class LeRobotExporter:
                 )
             if len(set(episode_indices)) != len(episode_indices):
                 raise LeRobotExportError("each episode can be exported only once")
-            if self.dst_path.exists() and (not self.dst_path.is_dir() or any(self.dst_path.iterdir())):
+            if not admits_export(self.dst_path):
                 raise LeRobotExportError("the output directory must be new or empty")
             episodes = self._episodes(info, episode_indices, edits_map or {}, language or {})
             sizes = self._video_sizes(info, episodes)
-            existing = self.dst_path.exists()
-            # Staging inside an existing directory keeps it, which a mount point or a read-only parent requires.
+            created = _make_destination(self.dst_path)
+            lock = _lock(self.dst_path)
+            _recover(self.dst_path)
+            if any(entry.name != LOCK_FILE for entry in self.dst_path.iterdir()):
+                raise LeRobotExportError("the output directory must be new or empty")
             # A plain mkdir applies the process umask, unlike mkdtemp's fixed 0700.
-            if existing:
-                staging = _claim(self.dst_path)
-            else:
-                self.dst_path.parent.mkdir(parents=True, exist_ok=True)
-                staging = self.dst_path.parent / f".{self.dst_path.name}-{uuid4().hex}.partial"
-                staging.mkdir()
+            (self.dst_path / CLAIM_DIRECTORY).mkdir()
+            claim = self.dst_path / CLAIM_DIRECTORY
+            staging = claim / _STAGING
+            staging.mkdir()
             self._write(staging, info, episodes, sizes, started, progress_callback)
-            if existing:
-                _move_into(staging, self.dst_path)
-            else:
-                staging.rename(self.dst_path)
-            staging = None
+            _move_into(staging, self.dst_path)
+            published = True
             removed = sum(
                 len({frame for frame in (episode.edits.removed_frames or set()) if 0 <= frame < episode.table.num_rows})
                 for episode in episodes
@@ -441,8 +542,14 @@ class LeRobotExporter:
         except Exception as error:
             return ExportResult(success=False, output_files=[], error=f"Unexpected error: {error}")
         finally:
-            if staging is not None:
-                shutil.rmtree(staging, ignore_errors=True)
+            # Only the lock holder removes anything.
+            if lock is not None:
+                if claim is not None:
+                    shutil.rmtree(claim, ignore_errors=True)
+                _release_lock(lock, self.dst_path / LOCK_FILE)
+                if created and not published:
+                    with contextlib.suppress(OSError):
+                        self.dst_path.rmdir()
 
     def _episodes(
         self,
