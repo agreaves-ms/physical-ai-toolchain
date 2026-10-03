@@ -161,6 +161,8 @@ STORAGE_BACKEND=local
 DATA_DIR=/path/to/your/datasets
 ```
 
+The backend lists every dataset folder under `DATA_DIR`, up to five levels deep, and joins nested folder names with `--` in the dataset ID. It skips folders whose names start with `.`, including an export's hidden staging folder.
+
 ### Azure Blob Storage
 
 Use this mode when datasets live in Azure Blob Storage. Authentication uses
@@ -608,7 +610,11 @@ Supported fields include object, pickup location, grasp outcome, place outcome, 
 | LeRobot v3.0  | A new LeRobot v3.0 dataset at the output path, which must be new or empty and outside the source dataset |
 | HDF5          | `episode_<index>.hdf5` files in the output directory, with `.meta.json` and `.subtasks.json` beside them |
 
-An existing empty output directory, such as a mounted volume, is kept, and a LeRobot export appears in it only once it completes. While it writes, the export holds a hidden `.dataviewer-export.partial` directory there, and a second export to the same directory is refused. If the backend stops during an export, delete that hidden directory before exporting there again.
+A LeRobot export locks its output directory with a hidden `.dataviewer-export.lock` file and stages the dataset in a hidden `.dataviewer-export.partial` directory inside it, so an existing empty directory, such as a mounted volume, is kept. The dataset appears once the export completes, with `meta` moved in last. While the lock is held, a second export to the same directory fails.
+
+If the backend stops partway through an export, the next export to that directory cleans up first. Before moving anything into place, every export records the identity of each file it staged. The cleanup removes the stopped export's staging and the moved files that still match that record, and it keeps a dataset whose move finished. Anything else in the directory stays, including files added inside the stopped export's folders, and exports there fail until you remove it.
+
+LeRobot exports need a filesystem that supports file locking, such as a local disk or a Docker bind mount. On one that doesn't, the export fails and can leave an empty `.dataviewer-export.lock` behind. The export dialog reports every failure as "Export failed", and the backend log gives the reason.
 
 A LeRobot export:
 
@@ -636,7 +642,7 @@ For a LeRobot source, **Include language instructions as LeRobot task phrasings 
 - the instruction and its paraphrases become `task_aug` rows, which LeRobot rotates `${task}` through during training;
 - the subtask instructions become one numbered `plan` row at the first frame.
 
-These rows replace the source's `task_aug` and `plan` rows for that episode, and episodes without a saved instruction keep theirs. The option is on by default, and `dataviewer-export.json` records whose instruction was used and when it was saved.
+These rows replace the source's `task_aug` and `plan` rows for that episode, and episodes without a saved instruction keep theirs. The option is on by default in the dialog and in the export API, where `"includeLanguageInstructions": false` turns it off. `dataviewer-export.json` records whose instruction was used and when it was saved.
 
 Trajectory adjustments never replace recorded joint positions:
 
@@ -825,6 +831,15 @@ npm run format       # Prettier check
 npm run format:fix   # Prettier auto-fix
 npm run build        # Production build
 ```
+
+## 🔍 Troubleshooting
+
+Error messages in the viewer leave out server details; the backend log has them.
+
+| Symptom                                                                                      | Cause and fix                                                                                                                                                                                                                                                   |
+|----------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| "Error loading episode: The episode's files couldn't be read; the backend log has the cause" | The dataset's loader couldn't read the episode's files, and the episode, detection, auto-analysis and export-preview endpoints return HTTP 500 with code `EPISODE_LOAD_FAILED`. Find the file and error in the backend log, then repair or replace the episode. |
+| An export reports "Export failed"                                                            | The backend log names the cause. Another export may be writing to the same directory, the output directory may not be new or empty, or its filesystem may not support file locking.                                                                             |
 
 ## 📖 API Documentation
 
