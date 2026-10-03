@@ -225,7 +225,7 @@ def test_crop_and_resize_change_the_camera_video_and_feature_shape(source: Path)
     assert frames[0][1].shape == (6, 8, 3)
 
 
-def test_trajectory_adjustments_add_derived_state_beside_the_recordedframe_state(source: Path) -> None:
+def test_trajectory_adjustments_add_derived_state_beside_the_recorded_state(source: Path) -> None:
     adjustments = [
         TrajectoryAdjustment(frame_index=2, channel_deltas={0: 0.5}),
         TrajectoryAdjustment(frame_index=7, channel_values={2: -1.0}),
