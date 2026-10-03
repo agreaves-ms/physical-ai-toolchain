@@ -286,6 +286,9 @@ Key knobs (`backend/.env`):
 | `/api/analysis/anomaly-detection`          | POST   | Anomaly detection            |
 | `/api/ai/suggest-annotation`               | POST   | AI-suggested annotations     |
 
+When an episode's files can't be read, `GET /api/datasets/{id}/episodes/{idx}`, `detect`, `annotations/auto` and `export/preview` return HTTP 500 with `{"code": "EPISODE_LOAD_FAILED"}`, and the backend log has the cause.
+A failed export returns `"error": "Export failed"`, or a `complete` event with `"success": false` from the stream; the backend log has the reason.
+
 ## Annotation Workflow
 
 Annotation combines API calls for efficiency with Playwright UI interaction for verification. Use the API for bulk operations and the UI for visual review and spot-checking.
@@ -474,7 +477,10 @@ The Edit Tools trajectory editor adjusts state channels per frame, labelled with
 HDF5 exports keep the recorded joint positions as `data/qpos` and add the adjustments beside them as `data/qpos_adjusted`, with `data/qpos_adjusted_mask` marking the edited rows and the adjustment list in the episode's `.meta.json`.
 Velocities, actions and the other exported arrays stay as recorded.
 
-LeRobot v3.0 sources, including sim captures, export to a new LeRobot v3.0 dataset at the output path. That path must be new or empty and outside the source; an existing empty directory, such as a mount point, is kept. While an export writes there, it holds a hidden `.dataviewer-export.partial` directory and a second export to the same directory is refused; delete that directory if the backend stopped mid-export.
+LeRobot v3.0 sources, including sim captures, export to a new LeRobot v3.0 dataset at the output path. That path must be new or empty and outside the source; an existing empty directory, such as a mount point, is kept.
+The export locks the directory with a hidden `.dataviewer-export.lock` file and stages in a hidden `.dataviewer-export.partial` directory, so a second export to the same directory fails while the first runs.
+If the backend stops mid-export, the next export to that directory cleans up first. It removes the stopped export's staging and the moved files that still match the identities the stopped export recorded, and keeps a dataset whose move finished. Anything else stays, and exports there fail until it's removed.
+LeRobot exports need a filesystem with file locking; on one without, the export fails and can leave an empty `.dataviewer-export.lock`.
 The export keeps `observation.state` and every other recorded feature, and adds adjustments as `adjusted.observation.state` with `adjusted.observation.state_mask`. The `adjusted.` prefix keeps both out of LeRobot policy inputs.
 Removing or inserting frames renumbers `frame_index` and `timestamp`. `dataviewer-export.json` maps every output frame to its source frame and records the edits and remapped subtasks.
 Subtasks shrink to the frames that survive the edits, and a LeRobot export also writes each one as a LeRobot `subtask` row in `language_persistent`, starting at its first output frame.
@@ -483,6 +489,7 @@ Opening an export shows its subtasks in the editor: LeRobot rows run until the n
 Recorded language annotations move with the edited frames, apart from rows the exported subtasks or language instructions replace. Clearing **Include subtasks as LeRobot subtask annotations** in the export dialog leaves your subtask changes out; recorded annotations are still exported. For HDF5 the option reads **Include subtask metadata**, and clearing it still carries a recorded `.subtasks.json` forward.
 A LeRobot export has language columns when its source has them or when an exported episode gets subtask or language-instruction rows.
 **Include language instructions as LeRobot task phrasings and plan**, on by default for LeRobot sources, writes each episode's most recently saved language instruction as `task_aug` and `plan` rows that replace the recorded ones; `dataviewer-export.json` records whose instruction was used.
+API exports through `/export` and `/export/stream` include them too, unless the request body sets `"includeLanguageInstructions": false`.
 Each export is a separate dataset. LeRobot merges datasets only when their features match, so a cropped or adjusted export won't merge with an unedited one.
 
 ## Frontend UI Structure
@@ -505,6 +512,8 @@ The React app has these key areas for browser automation:
 | Backend fails to start                   | Check `backend/.venv` exists; run `cd backend && uv venv --python 3.12 && source .venv/bin/activate && uv pip install -e ".[dev,analysis,export]"` |
 | Frontend shows "Loading..." indefinitely | Verify backend is healthy: `curl http://localhost:8000/health`                                                                                     |
 | No datasets visible                      | Check `DATA_DIR` in `backend/.env` points to a directory with dataset subdirectories                                                               |
+| "The episode's files couldn't be read"   | The API returned 500 `EPISODE_LOAD_FAILED`; the backend log names the file and error                                                               |
+| Export reports "Export failed"           | Check the backend log: another export may be writing to the directory, it may not be new or empty, or its filesystem may not support file locking  |
 | Port conflict                            | Set `BACKEND_PORT` or `FRONTEND_PORT` environment variables                                                                                        |
 | CORS errors                              | Backend allows localhost ports 5173-5177; check the frontend port is in range                                                                      |
 | Labels not persisted after restart       | Check the PUT response; resolve any HTTP 412 revision conflict, then verify the saved labels with GET                                              |
