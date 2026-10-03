@@ -21,12 +21,13 @@ import json
 import math
 import os
 import shutil
+import stat
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fractions import Fraction
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import av
@@ -75,6 +76,7 @@ DATA_PATH = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
 VIDEO_PATH = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 
 _STAGING = "dataset"
+_RECORD = "publication.json"
 _LOCK_ATTEMPTS = 3
 _SUPPORTED_VERSION = "v3.0"
 _TIMELINE = ("timestamp", "frame_index", "episode_index", "index")
@@ -387,29 +389,156 @@ def _lock(directory: Path) -> int:
     raise LeRobotExportError("another export is writing to this directory")
 
 
-def _recover(directory: Path) -> None:
-    """Remove what an export that stopped partway left in a directory this export has locked."""
-    claim = directory / CLAIM_DIRECTORY
-    if claim.is_dir() and not claim.is_symlink():
-        shutil.rmtree(claim)
+@dataclass(frozen=True)
+class _Recorded:
+    """A staged file or directory, with the identity it keeps when publication moves it.
+
+    Files also record their size and modification time, because a deleted file's inode number can be reused.
+    """
+
+    path: str
+    directory: bool
+    dev: int
+    ino: int
+    size: int
+    mtime_ns: int
 
 
-def _move_into(staging: Path, directory: Path) -> None:
-    """Move staged entries into the directory without replacing any, removing those moved if one can't be."""
-    moved: list[Path] = []
+@dataclass(frozen=True)
+class _Publication:
+    """What publishing a staged dataset moves: its top-level entries in move order, and everything beneath them."""
+
+    moves: list[str]
+    entries: list[_Recorded]
+
+
+def _describe(staging: Path) -> _Publication:
+    """Describe the staged dataset: its top-level entries with ``meta`` last, and every file and directory."""
+    moves = sorted((entry.name for entry in staging.iterdir()), key=lambda name: (name == "meta", name))
+    entries = []
+    for root, directories, files in os.walk(staging):
+        for name in (*directories, *files):
+            path = Path(root, name)
+            status = path.lstat()
+            entries.append(
+                _Recorded(
+                    path.relative_to(staging).as_posix(),
+                    stat.S_ISDIR(status.st_mode),
+                    status.st_dev,
+                    status.st_ino,
+                    status.st_size,
+                    status.st_mtime_ns,
+                )
+            )
+    return _Publication(moves, entries)
+
+
+def _write_record(claim: Path, publication: _Publication) -> None:
+    """Write the publication record into the claim atomically, so a stopped export leaves it whole or absent."""
+    temporary = claim / f"{_RECORD}.tmp"
+    temporary.write_text(
+        json.dumps({"moves": publication.moves, "entries": [vars(entry) for entry in publication.entries]})
+    )
+    os.replace(temporary, claim / _RECORD)
+
+
+def _read_record(claim: Path) -> _Publication | None:
+    """Return a claim's publication record, or ``None`` when it's missing or can't be read."""
     try:
-        for entry in staging.iterdir():
-            target = directory / entry.name
+        raw = json.loads((claim / _RECORD).read_text())
+        return _Publication(
+            [str(name) for name in raw["moves"]],
+            [
+                _Recorded(
+                    str(entry["path"]),
+                    bool(entry["directory"]),
+                    int(entry["dev"]),
+                    int(entry["ino"]),
+                    int(entry["size"]),
+                    int(entry["mtime_ns"]),
+                )
+                for entry in raw["entries"]
+            ],
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _matches(status: os.stat_result, entry: _Recorded) -> bool:
+    """Return whether a file system entry is the recorded one rather than a replacement that reused its inode."""
+    if stat.S_ISDIR(status.st_mode) != entry.directory or (status.st_dev, status.st_ino) != (entry.dev, entry.ino):
+        return False
+    return entry.directory or (status.st_size, status.st_mtime_ns) == (entry.size, entry.mtime_ns)
+
+
+def _owned(directory: Path, entry: _Recorded, recorded: dict[str, _Recorded]) -> bool:
+    """Return whether ``entry`` and every recorded directory above it are still the recorded ones."""
+    parts = PurePosixPath(entry.path).parts
+    for depth in range(1, len(parts) + 1):
+        relative = "/".join(parts[:depth])
+        expected = recorded.get(relative)
+        if expected is None:
+            return False
+        try:
+            status = (directory / relative).lstat()
+        except OSError:
+            return False
+        if not _matches(status, expected):
+            return False
+    return True
+
+
+def _remove_recorded(directory: Path, publication: _Publication) -> None:
+    """Remove recorded files still in ``directory`` with their recorded identities, then the directories that empties.
+
+    A file someone added or replaced keeps its directory, and with it the directories above, in place.
+    """
+    recorded = {entry.path: entry for entry in publication.entries}
+    for entry in publication.entries:
+        if not entry.directory and _owned(directory, entry, recorded):
+            (directory / entry.path).unlink()
+    for entry in sorted(publication.entries, key=lambda entry: entry.path.count("/"), reverse=True):
+        if entry.directory and _owned(directory, entry, recorded):
+            with contextlib.suppress(OSError):
+                (directory / entry.path).rmdir()
+
+
+def _published(directory: Path, publication: _Publication) -> bool:
+    """Return whether the publication's last move, ``meta``, reached the directory, so it completed."""
+    recorded = {entry.path: entry for entry in publication.entries}
+    last = recorded.get(publication.moves[-1]) if publication.moves else None
+    return last is not None and _owned(directory, last, recorded)
+
+
+def _recover(directory: Path) -> None:
+    """Remove what an export that stopped partway left in a directory this export has locked.
+
+    Without a readable record, only the claim goes. When the record's last move is in place, the publication
+    completed and its dataset stays. Otherwise the stopped export's moved files go wherever their recorded
+    identities still match, along with the directories that empties; everything else stays.
+    """
+    claim = directory / CLAIM_DIRECTORY
+    if not claim.is_dir() or claim.is_symlink():
+        return
+    publication = _read_record(claim)
+    if publication is not None and not _published(directory, publication):
+        _remove_recorded(directory, publication)
+    shutil.rmtree(claim)
+
+
+def _move_into(staging: Path, directory: Path, publication: _Publication) -> None:
+    """Move the staged entries into the directory in the recorded order, without replacing any.
+
+    If a move fails, what this export already moved is removed with the identity checks recovery uses.
+    """
+    try:
+        for name in publication.moves:
+            target = directory / name
             if target.exists() or target.is_symlink():
-                raise LeRobotExportError(f"{entry.name!r} already exists in the output directory")
-            entry.rename(target)
-            moved.append(target)
+                raise LeRobotExportError(f"{name!r} already exists in the output directory")
+            (staging / name).rename(target)
     except Exception:
-        for target in moved:
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target, ignore_errors=True)
-            else:
-                target.unlink(missing_ok=True)
+        _remove_recorded(directory, publication)
         raise
     staging.rmdir()
 
@@ -460,8 +589,10 @@ class LeRobotExporter:
     The output directory must be new or empty. The export locks it before writing, stages the dataset in a
     hidden claim inside it and then moves the dataset into place, so an existing directory, such as a mount
     point, is kept and nothing is written beside it. A second export to the directory fails while the lock is
-    held, a failed export removes what it created, and the next export cleans up after one that stopped
-    partway.
+    held, and a failed export removes what it created. Before moving anything, the export records every staged
+    file's identity and moves ``meta`` last. The next export to the directory uses that record to clean up after
+    one that stopped partway, removing only what that export had moved, and keeps a dataset whose publication
+    completed.
 
     Example:
         >>> exporter = LeRobotExporter("/data/capture/lerobot", "/data/capture-edited", dataset_id="capture--lerobot")
@@ -520,7 +651,9 @@ class LeRobotExporter:
             staging = claim / _STAGING
             staging.mkdir()
             self._write(staging, info, episodes, sizes, started, progress_callback)
-            _move_into(staging, self.dst_path)
+            publication = _describe(staging)
+            _write_record(claim, publication)
+            _move_into(staging, self.dst_path, publication)
             published = True
             removed = sum(
                 len({frame for frame in (episode.edits.removed_frames or set()) if 0 <= frame < episode.table.num_rows})

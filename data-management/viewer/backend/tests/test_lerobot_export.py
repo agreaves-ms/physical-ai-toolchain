@@ -699,17 +699,74 @@ def test_an_export_that_loses_the_race_for_an_existing_directory_leaves_it_alone
         assert os.path.samestat(os.stat(output / LOCK_FILE), os.fstat(held_locks[0]))
 
 
-@pytest.mark.parametrize("stop", ["before publishing"])
-def test_the_next_export_cleans_up_after_a_hard_stop(source: Path, stop: str) -> None:
+def _published(output: Path) -> dict[str, str]:
+    return {name: digest for name, digest in _digests(output).items() if not name.startswith(".")}
+
+
+@pytest.mark.parametrize(
+    ("stop", "foreign"),
+    [
+        ("before publishing", False),
+        ("after the first move", False),
+        (f"after {PROVENANCE_FILE} moved", True),
+        ("after meta moved", False),
+    ],
+    ids=["before-publishing", "after-the-first-move", "with-foreign-content", "after-meta"],
+)
+def test_the_next_export_cleans_up_after_a_hard_stop(source: Path, stop: str, foreign: bool) -> None:
     output = source.parents[1] / "edited"
     stop_export(source, output, stop)
     assert (output / CLAIM_DIRECTORY).is_dir()
+    moved = output / "data"
+    if foreign:
+        moved_identity = moved.stat()
+        (output / "notes.txt").write_text("mine")
+        (moved / "keep.txt").write_text("mine too")
+        recorded = moved / "chunk-000/file-000.parquet"
+        recorded.unlink()
+        recorded.write_bytes(b"replaced")
+    before = _published(output)
 
     result = LeRobotExporter(source, output, dataset_id="retry").export_episodes([1])
 
-    assert result.success, result.error
-    assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
-    assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "retry"
+    names = sorted(path.name for path in output.iterdir())
+    if foreign:
+        assert result.success is False
+        assert "new or empty" in result.error
+        assert names == ["data", "notes.txt"]
+        assert os.path.samestat(moved.stat(), moved_identity)
+        assert (output / "notes.txt").read_text() == "mine"
+        assert (moved / "keep.txt").read_text() == "mine too"
+        assert (moved / "chunk-000/file-000.parquet").read_bytes() == b"replaced"
+    elif stop == "after meta moved":
+        assert result.success is False
+        assert "new or empty" in result.error
+        assert names == DATASET_ENTRIES
+        assert _published(output) == before
+        assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "stopped"
+    else:
+        assert result.success, result.error
+        assert names == DATASET_ENTRIES
+        assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "retry"
+        assert _data(output).num_rows == LENGTHS[1]
+
+
+def test_publication_moves_meta_last(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output = source.parents[1] / "edited"
+    rename = Path.rename
+    moved: list[str] = []
+
+    def record_moves(self: Path, target: Path) -> Path:
+        if Path(target).parent == output:
+            moved.append(Path(target).name)
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", record_moves)
+
+    _export(source, [0])
+
+    assert moved[-1] == "meta"
+    assert sorted(moved) == DATASET_ENTRIES
 
 
 @pytest.mark.parametrize("peer", [False, True], ids=["alone", "peer-holds-the-lock"])
