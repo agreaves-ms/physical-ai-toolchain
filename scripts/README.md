@@ -105,8 +105,8 @@ Security scanning and dependency management scripts.
 | `security/Modules/PinnedToolVersions.psm1` | Provide pin discovery functions for binary freshness checks                                   |
 | `security/Test-HveCoreFreshness.ps1`       | Check hve-core-derived files against their reviewed release or source-header baselines        |
 | `security/Test-WorkflowPermissions.ps1`    | Enforce explicit workflow and job `GITHUB_TOKEN` permissions                                  |
-| `security/Test-DangerousWorkflow.ps1`      | Detect unsafe event/input interpolation and untrusted `pull_request_target` checkouts          |
-| `security/Test-PublicDependencyFeeds.ps1`  | Reject private or non-canonical package sources in committed dependency metadata               |
+| `security/Test-DangerousWorkflow.ps1`      | Detect unsafe event/input interpolation and untrusted `pull_request_target` checkouts         |
+| `security/Test-PublicDependencyFeeds.ps1`  | Reject private or non-canonical package sources in committed dependency metadata              |
 | `security/zap-to-sarif.py`                 | Convert ZAP results to SARIF format                                                           |
 | `security/gitleaks-scan.mjs`               | Scan tested-revision history and report explicit secret-scan outcomes                         |
 | `update-chart-hashes.sh`                   | Refresh pinned Helm chart versions and SHA-256 hashes in `infrastructure/setup/defaults.conf` |
