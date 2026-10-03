@@ -371,19 +371,20 @@ def _lock(directory: Path) -> int:
         except OSError as error:
             raise LeRobotExportError(f"the output directory can't be locked: {error}") from error
         try:
-            locked = _try_lock(fd)
+            if not _try_lock(fd):
+                raise LeRobotExportError("another export is writing to this directory")
+            # The previous holder may have removed the file after this export opened it.
+            try:
+                same = os.path.samestat(os.stat(path), os.fstat(fd))
+            except FileNotFoundError:
+                same = False
         except OSError as error:
             os.close(fd)
             raise LeRobotExportError(f"the output directory can't be locked: {error}") from error
-        if not locked:
+        except BaseException:
             os.close(fd)
-            raise LeRobotExportError("another export is writing to this directory")
-        # The previous holder may have removed the file after this export opened it.
-        try:
-            current = os.stat(path)
-        except FileNotFoundError:
-            current = None
-        if current is not None and os.path.samestat(current, os.fstat(fd)):
+            raise
+        if same:
             return fd
         os.close(fd)
     raise LeRobotExportError("another export is writing to this directory")

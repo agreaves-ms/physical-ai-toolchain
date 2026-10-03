@@ -887,3 +887,31 @@ def test_an_incomplete_rollback_or_recovery_keeps_the_claim_for_the_next_export(
 
     assert retried.success, retried.error
     assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
+
+
+def test_an_error_while_checking_the_lock_releases_it(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output = source.parents[1] / "edited"
+    real_os = lerobot_exporter.os
+
+    class FailingLockCheck:
+        """The exporter's ``os`` with an I/O error when it checks the lock file's identity."""
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(real_os, name)
+
+        def stat(self, path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            if Path(path).name == LOCK_FILE:
+                raise OSError(errno.EIO, "simulated I/O error")
+            return real_os.stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(lerobot_exporter, "os", FailingLockCheck())
+
+    failed = LeRobotExporter(source, output).export_episodes([0])
+
+    assert failed.success is False
+    assert "can't be locked" in failed.error
+    monkeypatch.undo()
+
+    retried = LeRobotExporter(source, output).export_episodes([0])
+
+    assert retried.success, retried.error
