@@ -12,8 +12,8 @@ BeforeAll {
     @'
       - name: Bootstrap hve-core RPI skills
         env:
-          # microsoft/hve-core derived-files release: hve-core-v3.2.2 (2026-03-23)
-          HVE_CORE_DERIVED_FILES_REF: e69486a5f809ede45c63c0a31358c12912bd5168
+          # microsoft/hve-core derived-files release: hve-core-v3.3.101 (2026-04-25)
+          HVE_CORE_DERIVED_FILES_REF: 0d4452b33c2409d03315019dae0d34e468641dfb
         run: echo bootstrap
 '@ | Set-Content -Path $script:SetupPath -Encoding utf8
 
@@ -41,6 +41,7 @@ Describe 'DerivedFiles configuration' -Tag 'Unit' {
             'scripts/linting/Modules/FrontmatterValidation.psm1|release'
             'scripts/security/Test-WorkflowPermissions.ps1|source-header'
             'scripts/security/Test-DangerousWorkflow.ps1|source-header'
+            'scripts/security/Test-PublicDependencyFeeds.ps1|source-header'
             'scripts/linting/Format-MarkdownTables.ps1|source-header'
             'scripts/tests/linting/Test-Format-MarkdownTables.Tests.ps1|source-header'
         )
@@ -52,9 +53,10 @@ Describe 'DerivedFiles configuration' -Tag 'Unit' {
     It 'Tracks the security linters and the table formatter with source-header baselines' {
         $sourceFiles = @($script:DerivedFiles | Where-Object { $_.Baseline -eq 'source-header' })
 
-        $sourceFiles.Count | Should -Be 4
+        $sourceFiles.Count | Should -Be 5
         $sourceFiles.Path | Should -Contain 'scripts/security/Test-WorkflowPermissions.ps1'
         $sourceFiles.Path | Should -Contain 'scripts/security/Test-DangerousWorkflow.ps1'
+        $sourceFiles.Path | Should -Contain 'scripts/security/Test-PublicDependencyFeeds.ps1'
         $sourceFiles.Path | Should -Contain 'scripts/linting/Format-MarkdownTables.ps1'
         $sourceFiles.Path | Should -Contain 'scripts/tests/linting/Test-Format-MarkdownTables.Tests.ps1'
     }
@@ -89,8 +91,8 @@ Describe 'DerivedFiles configuration' -Tag 'Unit' {
 Describe 'Get-PinnedHveCoreRef' -Tag 'Unit' {
     It 'Extracts the pinned SHA and release tag' {
         $ref = Get-PinnedHveCoreRef -Path $script:SetupPath
-        $ref.Sha | Should -Be 'e69486a5f809ede45c63c0a31358c12912bd5168'
-        $ref.Tag | Should -Be 'hve-core-v3.2.2'
+        $ref.Sha | Should -Be '0d4452b33c2409d03315019dae0d34e468641dfb'
+        $ref.Tag | Should -Be 'hve-core-v3.3.101'
     }
 
     It 'Returns null for a missing file' {
@@ -110,13 +112,13 @@ Describe 'Get-PinnedHveCoreRef' -Tag 'Unit' {
         @"
 env:
   RPI_SKILLS_REF: $($script:ResolvedRpiSha)
-  # microsoft/hve-core derived-files release: hve-core-v3.2.2
-  HVE_CORE_DERIVED_FILES_REF: e69486a5f809ede45c63c0a31358c12912bd5168
+  # microsoft/hve-core derived-files release: hve-core-v3.3.101
+  HVE_CORE_DERIVED_FILES_REF: 0d4452b33c2409d03315019dae0d34e468641dfb
 "@ | Set-Content -Path $p -Encoding utf8
 
         $ref = Get-PinnedHveCoreRef -Path $p
 
-        $ref.Sha | Should -Be 'e69486a5f809ede45c63c0a31358c12912bd5168'
+        $ref.Sha | Should -Be '0d4452b33c2409d03315019dae0d34e468641dfb'
     }
 
     It 'Rejects a shortened or suffixed HVE_CORE_DERIVED_FILES_REF' {
@@ -877,7 +879,7 @@ Describe 'Invoke-HveCoreFreshnessCheck' -Tag 'Unit' {
         $result.DriftCount | Should -Be 0
         $result.ErrorCount | Should -Be 0
         @($result.Files).Count | Should -Be $script:DerivedFiles.Count
-        @($result.Files | Where-Object { $_.Baseline -eq 'source-header' }).Count | Should -Be 4
+        @($result.Files | Where-Object { $_.Baseline -eq 'source-header' }).Count | Should -Be 5
     }
 
     It 'Records a file-level error and continues checking remaining files' {

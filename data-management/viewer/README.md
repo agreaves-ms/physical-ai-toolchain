@@ -37,12 +37,8 @@ The backend container image installs `ffmpeg`. When you run the backend outside 
 ```bash
 cd backend
 
-# Create virtual environment (using uv)
-uv venv --python 3.12
-source .venv/bin/activate
-
-# Install dependencies (include 'azure' extra for blob storage support)
-uv pip install -e ".[dev,export,azure]"
+# Install locked dependencies (include 'azure' extra for blob storage support)
+uv sync --frozen --python 3.12 --group dev --extra export --extra azure
 ```
 
 ### Frontend Setup

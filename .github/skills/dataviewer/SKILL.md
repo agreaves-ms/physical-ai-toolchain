@@ -507,20 +507,20 @@ The React app has these key areas for browser automation:
 
 ## Troubleshooting
 
-| Issue                                    | Solution                                                                                                                                           |
-|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| Backend fails to start                   | Check `backend/.venv` exists; run `cd backend && uv venv --python 3.12 && source .venv/bin/activate && uv pip install -e ".[dev,analysis,export]"` |
-| Frontend shows "Loading..." indefinitely | Verify backend is healthy: `curl http://localhost:8000/health`                                                                                     |
-| No datasets visible                      | Check `DATA_DIR` in `backend/.env` points to a directory with dataset subdirectories                                                               |
-| "The episode's files couldn't be read"   | The API returned 500 `EPISODE_LOAD_FAILED`; the backend log names the file and error                                                               |
-| Export reports "Export failed"           | Check the backend log: another export may be writing to the directory, it may not be new or empty, or its filesystem may not support file locking  |
-| Port conflict                            | Set `BACKEND_PORT` or `FRONTEND_PORT` environment variables                                                                                        |
-| CORS errors                              | Backend allows localhost ports 5173-5177; check the frontend port is in range                                                                      |
-| Labels not persisted after restart       | Check the PUT response; resolve any HTTP 412 revision conflict, then verify the saved labels with GET                                              |
-| Playwright opens separate Chrome window  | Ensure `--headless` is in the Playwright MCP args in `.vscode/mcp.json`; restart the MCP server after changing                                     |
-| Snapshot refs stale after navigation     | Read the page again with `read_page` or `browser_snapshot` before clicking; refs change on page updates                                            |
-| Slider not responding to automation      | Use `run_playwright_code` or `browser_evaluate` with native input value setter and dispatch `input` + `change` events                              |
-| Sidebar not scrolling                    | Scroll the `aside ul` element directly via `run_playwright_code` or `browser_evaluate` with `element.scrollTop = N`                                |
+| Issue                                    | Solution                                                                                                                                          |
+|------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| Backend fails to start                   | Recreate the locked environment with `cd backend && uv sync --frozen --python 3.12 --group dev --extra analysis --extra export`                   |
+| Frontend shows "Loading..." indefinitely | Verify backend is healthy: `curl http://localhost:8000/health`                                                                                    |
+| No datasets visible                      | Check `DATA_DIR` in `backend/.env` points to a directory with dataset subdirectories                                                              |
+| "The episode's files couldn't be read"   | The API returned 500 `EPISODE_LOAD_FAILED`; the backend log names the file and error                                                              |
+| Export reports "Export failed"           | Check the backend log: another export may be writing to the directory, it may not be new or empty, or its filesystem may not support file locking |
+| Port conflict                            | Set `BACKEND_PORT` or `FRONTEND_PORT` environment variables                                                                                       |
+| CORS errors                              | Backend allows localhost ports 5173-5177; check the frontend port is in range                                                                     |
+| Labels not persisted after restart       | Check the PUT response; resolve any HTTP 412 revision conflict, then verify the saved labels with GET                                             |
+| Playwright opens separate Chrome window  | Ensure `--headless` is in the Playwright MCP args in `.vscode/mcp.json`; restart the MCP server after changing                                    |
+| Snapshot refs stale after navigation     | Read the page again with `read_page` or `browser_snapshot` before clicking; refs change on page updates                                           |
+| Slider not responding to automation      | Use `run_playwright_code` or `browser_evaluate` with native input value setter and dispatch `input` + `change` events                             |
+| Sidebar not scrolling                    | Scroll the `aside ul` element directly via `run_playwright_code` or `browser_evaluate` with `element.scrollTop = N`                               |
 
 ## VLM-as-Judge Workflow
 
