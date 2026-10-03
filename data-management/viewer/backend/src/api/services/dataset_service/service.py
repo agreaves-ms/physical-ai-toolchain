@@ -430,11 +430,11 @@ class DatasetService:
             self._evict_dataset(dataset_id)
 
     def _scan_directory(self, directory: Path, prefix_parts: list[str], discovered: set[str]) -> None:
-        """Recursively scan for datasets, building --separated IDs. Max 5 levels."""
+        """Recursively scan for datasets, building --separated IDs. Max 5 levels; hidden folders are skipped."""
         if len(prefix_parts) >= 5:
             return
         for item in directory.iterdir():
-            if not item.is_dir():
+            if not item.is_dir() or item.name.startswith("."):
                 continue
             current_parts = [*prefix_parts, item.name]
             handled = False
