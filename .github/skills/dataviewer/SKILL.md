@@ -479,7 +479,7 @@ Velocities, actions and the other exported arrays stay as recorded.
 
 LeRobot v3.0 sources, including sim captures, export to a new LeRobot v3.0 dataset at the output path. That path must be new or empty and outside the source; an existing empty directory, such as a mount point, is kept.
 The export locks the directory with a hidden `.dataviewer-export.lock` file and stages in a hidden `.dataviewer-export.partial` directory, so a second export to the same directory fails while the first runs.
-If the backend stops mid-export, the next export to that directory cleans up first. It removes the stopped export's staging and the moved files that still match the identities the stopped export recorded, and keeps a dataset whose move finished. Anything else stays, and exports there fail until it's removed.
+If the backend stops mid-export, or an export fails and can't remove what it moved, the next export to that directory cleans up first. It removes the earlier export's staging and the moved files that still match the identities that export recorded, and keeps a dataset whose move finished. Anything else stays, and exports there fail until it's removed.
 LeRobot exports need a filesystem with file locking; on one without, the export fails and can leave an empty `.dataviewer-export.lock`.
 The export keeps `observation.state` and every other recorded feature, and adds adjustments as `adjusted.observation.state` with `adjusted.observation.state_mask`. The `adjusted.` prefix keeps both out of LeRobot policy inputs.
 Removing or inserting frames renumbers `frame_index` and `timestamp`. `dataviewer-export.json` maps every output frame to its source frame and records the edits and remapped subtasks.
