@@ -491,7 +491,8 @@ def _owned(directory: Path, entry: _Recorded, recorded: dict[str, _Recorded]) ->
 def _remove_recorded(directory: Path, publication: _Publication) -> None:
     """Remove recorded files still in ``directory`` with their recorded identities, then the directories that empties.
 
-    A file someone added or replaced keeps its directory, and with it the directories above, in place.
+    A file someone added or replaced keeps its directory, and with it the directories above, in place. Any other
+    error propagates, so the caller keeps the claim and its record for another attempt.
     """
     recorded = {entry.path: entry for entry in publication.entries}
     for entry in publication.entries:
@@ -499,8 +500,31 @@ def _remove_recorded(directory: Path, publication: _Publication) -> None:
             (directory / entry.path).unlink()
     for entry in sorted(publication.entries, key=lambda entry: entry.path.count("/"), reverse=True):
         if entry.directory and _owned(directory, entry, recorded):
-            with contextlib.suppress(OSError):
+            try:
                 (directory / entry.path).rmdir()
+            except OSError as error:
+                if error.errno not in (errno.ENOTEMPTY, errno.EEXIST, errno.ENOENT):
+                    raise
+
+
+def _left_in_place(directory: Path, publication: _Publication) -> bool:
+    """Return whether anything the publication moved may still be in ``directory`` with its recorded identity.
+
+    An entry that can't be checked counts as still in place, so the claim and its record stay.
+    """
+    recorded = {entry.path: entry for entry in publication.entries}
+    for name in publication.moves:
+        if name not in recorded:
+            continue
+        try:
+            status = (directory / name).lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+        if _matches(status, recorded[name]):
+            return True
+    return False
 
 
 def _published(directory: Path, publication: _Publication) -> bool:
@@ -627,6 +651,7 @@ class LeRobotExporter:
         started = datetime.now(UTC)
         lock: int | None = None
         claim: Path | None = None
+        publication: _Publication | None = None
         created = published = False
         try:
             info = self.loader.get_dataset_info()
@@ -675,9 +700,11 @@ class LeRobotExporter:
         except Exception as error:
             return ExportResult(success=False, output_files=[], error=f"Unexpected error: {error}")
         finally:
-            # Only the lock holder removes anything.
+            # Only the lock holder removes anything, and the claim stays while entries this export moved do.
             if lock is not None:
-                if claim is not None:
+                if claim is not None and (
+                    published or publication is None or not _left_in_place(self.dst_path, publication)
+                ):
                     shutil.rmtree(claim, ignore_errors=True)
                 _release_lock(lock, self.dst_path / LOCK_FILE)
                 if created and not published:

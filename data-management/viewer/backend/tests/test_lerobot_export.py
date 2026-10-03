@@ -830,3 +830,60 @@ def test_an_export_whose_lock_file_is_replaced_locks_the_current_one(
     else:
         assert result.success, result.error
         assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
+
+
+@pytest.mark.parametrize("failure", ["rollback", "recovery", "unreadable"])
+def test_an_incomplete_rollback_or_recovery_keeps_the_claim_for_the_next_export(
+    source: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    output = source.parents[1] / "edited"
+    moved = output / "data"
+    if failure in ("rollback", "unreadable"):
+        rename, unlink, lstat = Path.rename, Path.unlink, Path.lstat
+        moves: list[str] = []
+
+        # The second move fails after `data` has moved; an unreadable `data` can't be checked from then on.
+        def fail_second_move(self: Path, target: Path) -> Path:
+            if Path(target).parent == output:
+                moves.append(self.name)
+                if len(moves) == 2:
+                    raise OSError("simulated rename failure")
+            return rename(self, target)
+
+        def refuse_to_unlink_moved_files(self: Path, missing_ok: bool = False) -> None:
+            if self.is_relative_to(moved):
+                raise PermissionError(errno.EACCES, "simulated permission error", str(self))
+            unlink(self, missing_ok=missing_ok)
+
+        def refuse_to_read_the_moved_folder(self: Path) -> os.stat_result:
+            if len(moves) == 2 and self == moved:
+                raise PermissionError(errno.EACCES, "simulated permission error", str(self))
+            return lstat(self)
+
+        monkeypatch.setattr(Path, "rename", fail_second_move)
+        if failure == "rollback":
+            monkeypatch.setattr(Path, "unlink", refuse_to_unlink_moved_files)
+        else:
+            monkeypatch.setattr(Path, "lstat", refuse_to_read_the_moved_folder)
+    else:
+        stop_export(source, output, "after the first move")
+        rmdir = Path.rmdir
+
+        def refuse_to_remove_the_moved_folder(self: Path) -> None:
+            if self == moved:
+                raise PermissionError(errno.EACCES, "simulated permission error", str(self))
+            rmdir(self)
+
+        monkeypatch.setattr(Path, "rmdir", refuse_to_remove_the_moved_folder)
+
+    failed = LeRobotExporter(source, output, dataset_id="first").export_episodes([0])
+
+    assert failed.success is False
+    assert (output / CLAIM_DIRECTORY / "publication.json").is_file()
+    assert moved.is_dir()
+    monkeypatch.undo()
+
+    retried = LeRobotExporter(source, output, dataset_id="retry").export_episodes([1])
+
+    assert retried.success, retried.error
+    assert sorted(path.name for path in output.iterdir()) == DATASET_ENTRIES
