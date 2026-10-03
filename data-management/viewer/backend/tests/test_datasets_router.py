@@ -317,6 +317,35 @@ class TestGetEpisode:
             "message": "Episode 0 of dataset 'ds-1' could not be loaded",
         }
 
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("POST", "/api/datasets/ds-1/episodes/0/detect"),
+            ("POST", "/api/datasets/ds-1/episodes/0/annotations/auto"),
+            ("GET", "/api/datasets/ds-1/export/preview?episode_indices=0"),
+        ],
+        ids=["detection", "auto-analysis", "export-preview"],
+    )
+    def test_endpoints_that_read_an_episode_report_load_failures(
+        self, client: TestClient, override_service, method: str, path: str
+    ) -> None:
+        from src.api.main import app
+        from src.api.services.annotation_service import get_annotation_service
+        from src.api.services.detection_service import get_detection_service
+
+        override_service.get_dataset = AsyncMock(return_value=_make_dataset("ds-1"))
+        override_service.get_episode = AsyncMock(side_effect=EpisodeLoadError("ds-1", 0))
+        app.dependency_overrides[get_detection_service] = lambda: MagicMock()
+        app.dependency_overrides[get_annotation_service] = lambda: MagicMock()
+        try:
+            resp = client.request(method, path, json={} if method == "POST" else None)
+        finally:
+            app.dependency_overrides.pop(get_detection_service, None)
+            app.dependency_overrides.pop(get_annotation_service, None)
+
+        assert resp.status_code == 500
+        assert resp.json()["code"] == "EPISODE_LOAD_FAILED"
+
 
 # ---------------------------------------------------------------------------
 # GET /api/datasets/{id}/episodes/{episode_idx}/trajectory
