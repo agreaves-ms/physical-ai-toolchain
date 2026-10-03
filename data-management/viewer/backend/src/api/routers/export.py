@@ -139,8 +139,11 @@ class ExportRequest(SanitizedModel):
     applyEdits: bool = Field(True, description="Whether to apply edit operations")
     edits: dict[int, EpisodeEditRequest] | None = Field(None, description="Edit operations by episode index")
     includeLanguageInstructions: bool = Field(
-        False,
-        description="For LeRobot sources, write each episode's latest saved instruction as task_aug and plan rows",
+        True,
+        description=(
+            "For LeRobot sources, write each episode's latest saved instruction as task_aug and plan rows; "
+            "send false to leave them out"
+        ),
     )
 
 

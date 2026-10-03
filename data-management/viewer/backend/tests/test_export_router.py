@@ -528,8 +528,8 @@ class TestLeRobotExports:
         cls.assert_called_once_with(dataset_dir, base / "ds-1-edited", dataset_id="ds-1")
 
     @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
-    @pytest.mark.parametrize("include", [True, False])
-    def test_lerobot_exports_get_the_latest_saved_language_instruction_when_asked(
+    @pytest.mark.parametrize("include", [True, False, None], ids=["included", "left-out", "by-default"])
+    def test_lerobot_exports_get_the_latest_saved_language_instruction_unless_left_out(
         self,
         client: TestClient,
         override_service,
@@ -537,19 +537,21 @@ class TestLeRobotExports:
         dataset_layout,
         monkeypatch: pytest.MonkeyPatch,
         endpoint: str,
-        include: bool,
+        include: bool | None,
     ) -> None:
         base, _dataset, _output = dataset_layout
         override_service.dataset_is_lerobot.return_value = True
         _cls, instance = _patch_lerobot_exporter(monkeypatch)
-        body = {"episodeIndices": [0, 1], "outputPath": str(base / "edited"), "includeLanguageInstructions": include}
+        body: dict[str, Any] = {"episodeIndices": [0, 1], "outputPath": str(base / "edited")}
+        if include is not None:
+            body["includeLanguageInstructions"] = include
 
         _post_export(client, endpoint, body)
 
         latest = LanguageInstruction(
             "Pick up the gear", ("Grab the gear",), ("Approach",), "annotator-b", "2026-10-01T12:00:00+00:00"
         )
-        assert instance.export_episodes.call_args.kwargs["language"] == ({0: latest} if include else {})
+        assert instance.export_episodes.call_args.kwargs["language"] == ({} if include is False else {0: latest})
 
     @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
     def test_hdf5_exports_ignore_the_language_option(
