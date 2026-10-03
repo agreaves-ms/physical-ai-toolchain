@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -613,15 +612,6 @@ def test_a_non_empty_output_directory_is_refused(source: Path) -> None:
     assert result.success is False
     assert "new or empty" in result.error
     assert [path.name for path in output.iterdir()] == ["keep.txt"]
-
-
-@pytest.fixture
-def held_locks() -> Iterator[list[int]]:
-    """Descriptors of locks the test holds as another export would, closed when the test ends."""
-    held: list[int] = []
-    yield held
-    for fd in held:
-        os.close(fd)
 
 
 def _stage_a_claim(output: Path) -> None:

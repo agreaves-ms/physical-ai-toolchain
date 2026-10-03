@@ -31,7 +31,7 @@ from ..services.episode_edits import (
     parse_edit_operations,
 )
 from ..services.hdf5_exporter import HDF5Exporter
-from ..services.lerobot_exporter import LeRobotExporter
+from ..services.lerobot_exporter import LeRobotExporter, admits_export
 from ..services.lerobot_language import LanguageInstruction
 from ..validation import (
     SAFE_DATASET_ID_PATTERN,
@@ -157,7 +157,9 @@ def _prepare_output(service: DatasetService, dataset_id: str, dataset_path: Path
     """Validate the output path for the source's format and return whether the source is a LeRobot dataset.
 
     A LeRobot export writes a new dataset, so its path must be new or empty and must neither sit inside
-    nor contain the source. These checks run before anything is created; an HDF5 export creates its directory.
+    nor contain the source. What a stopped export left, a lock file or a claim, goes on to the exporter,
+    which recovers or refuses it. These checks run before anything is created; an HDF5 export creates its
+    directory.
     """
     if service.dataset_is_lerobot(dataset_id):
         if output_path.is_relative_to(dataset_path) or dataset_path.is_relative_to(output_path):
@@ -165,7 +167,7 @@ def _prepare_output(service: DatasetService, dataset_id: str, dataset_path: Path
                 status_code=400,
                 detail="Output path must be outside the source dataset and must not contain it",
             )
-        if output_path.exists() and (not output_path.is_dir() or any(output_path.iterdir())):
+        if not admits_export(output_path):
             raise HTTPException(
                 status_code=400,
                 detail="Output path must be a new or empty directory for a LeRobot export",

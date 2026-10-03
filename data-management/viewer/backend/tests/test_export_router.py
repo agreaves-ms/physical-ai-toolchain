@@ -7,7 +7,9 @@ HDF5 exporter mocked out.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +19,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from src.api.services.lerobot_exporter import LOCK_FILE, PROVENANCE_FILE
 from src.api.services.lerobot_language import LanguageInstruction
+
+from .lerobot_sources import hold_lock, stop_export, write_source
 
 
 @pytest.fixture
@@ -111,6 +116,28 @@ def _post_export(client: TestClient, endpoint: str, body: dict[str, Any]) -> Non
     with client.stream("POST", "/api/datasets/ds-1/export/stream", json=body) as resp:
         assert resp.status_code == 200
         assert "event: complete" in "".join(resp.iter_text())
+
+
+def _export_through(client: TestClient, endpoint: str, output: Path) -> dict[str, Any]:
+    """Export source episode 1 through an endpoint with the real exporter and return the public result."""
+    body = {"episodeIndices": [1], "outputPath": str(output), "includeLanguageInstructions": False}
+    if endpoint == "export":
+        resp = client.post("/api/datasets/ds-1/export", json=body)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+    with client.stream("POST", "/api/datasets/ds-1/export/stream", json=body) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+    return json.loads(text.split("event: complete\ndata: ", 1)[1].split("\n\n", 1)[0])
+
+
+def _contents(directory: Path) -> dict[str, str]:
+    """Map every file under ``directory``, hidden ones included, to a digest of its bytes."""
+    return {
+        path.relative_to(directory).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _make_export_result(success: bool = True, error: str | None = None) -> MagicMock:
@@ -544,6 +571,62 @@ class TestLeRobotExports:
 
         assert "language" not in instance.export_episodes.call_args.kwargs
         saved_annotations.get_annotation.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "state",
+        ["after-the-first-move", "foreign-root-file", "after-meta", "live-holder", "free-lock-file", "held-lock-file"],
+    )
+    @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
+    def test_either_endpoint_recovers_or_refuses_what_a_stopped_export_left(
+        self,
+        client: TestClient,
+        override_service,
+        dataset_layout,
+        held_locks: list[int],
+        caplog: pytest.LogCaptureFixture,
+        endpoint: str,
+        state: str,
+    ) -> None:
+        base, dataset_dir, _output = dataset_layout
+        write_source(dataset_dir)
+        override_service.dataset_is_lerobot.return_value = True
+        output = base / "edited"
+        if state in ("free-lock-file", "held-lock-file"):
+            output.mkdir()
+            (output / LOCK_FILE).touch()
+        else:
+            stop_export(dataset_dir, output, "after meta moved" if state == "after-meta" else "after the first move")
+        if state == "foreign-root-file":
+            (output / "notes.txt").write_text("mine")
+        if state in ("live-holder", "held-lock-file"):
+            held_locks.append(hold_lock(output))
+        before, identity = _contents(output), output.stat()
+
+        result = _export_through(client, endpoint, output)
+
+        names = sorted(path.name for path in output.iterdir())
+        if state in ("after-the-first-move", "free-lock-file"):
+            assert result["success"] is True, result
+            assert names == ["data", PROVENANCE_FILE, "meta", "videos"]
+            assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "ds-1"
+            return
+        assert result["success"] is False
+        assert result["error"] == "Export failed"
+        if state == "foreign-root-file":
+            assert names == ["notes.txt"]
+            assert (output / "notes.txt").read_text() == "mine"
+        elif state == "after-meta":
+            assert names == ["data", PROVENANCE_FILE, "meta", "videos"]
+            assert _contents(output) == {name: digest for name, digest in before.items() if not name.startswith(".")}
+            assert json.loads((output / PROVENANCE_FILE).read_text())["source"]["dataset_id"] == "stopped"
+        else:
+            assert _contents(output) == before
+            assert os.path.samestat(output.stat(), identity)
+            assert os.path.samestat(os.stat(output / LOCK_FILE), os.fstat(held_locks[0]))
+            assert "another export is writing to this directory" in caplog.text
+            if state == "held-lock-file":
+                os.close(held_locks.pop())
+                assert _export_through(client, endpoint, output)["success"] is True
 
 
 class TestExportEpisodesStream:
