@@ -612,7 +612,8 @@ Supported fields include object, pickup location, grasp outcome, place outcome, 
 
 A LeRobot export locks its output directory with a hidden `.dataviewer-export.lock` file and stages the dataset in a hidden `.dataviewer-export.partial` directory inside it, so an existing empty directory, such as a mounted volume, is kept. The dataset appears once the export completes, with `meta` moved in last. While the lock is held, a second export to the same directory fails.
 
-If the backend stops partway through an export, the next export to that directory cleans up first. Before moving anything into place, every export records the identity of each file it staged. The cleanup removes the stopped export's staging and the moved files that still match that record, and it keeps a dataset whose move finished. Anything else in the directory stays, including files added inside the stopped export's folders, and exports there fail until you remove it.
+If the backend stops partway through an export, or an export fails and can't remove what it moved, the next export to that directory cleans up first.
+Before moving anything into place, every export records the identity of each file it staged. The cleanup removes the earlier export's staging and the moved files that still match that record, and it keeps a dataset whose move finished. Anything else in the directory stays, including files added inside the earlier export's folders, and exports there fail until you remove it.
 
 LeRobot exports need a filesystem that supports file locking, such as a local disk or a Docker bind mount. On one that doesn't, the export fails and can leave an empty `.dataviewer-export.lock` behind. The export dialog reports every failure as "Export failed", and the backend log gives the reason.
 
