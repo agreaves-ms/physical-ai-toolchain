@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import logging
 import os
 import stat
 from pathlib import Path
@@ -27,6 +28,7 @@ from src.api.services.lerobot_exporter import (
     LOCK_FILE,
     PROVENANCE_FILE,
     LeRobotExporter,
+    LeRobotExportError,
 )
 from src.api.services.lerobot_language import LanguageInstruction
 
@@ -915,3 +917,47 @@ def test_an_error_while_checking_the_lock_releases_it(source: Path, monkeypatch:
     retried = LeRobotExporter(source, output).export_episodes([0])
 
     assert retried.success, retried.error
+
+
+@pytest.mark.parametrize(
+    ("refused", "outcome"),
+    [(LOCK_FILE, "success"), (LOCK_FILE, "failure"), ("publication.json", "success")],
+)
+def test_a_cleanup_error_keeps_the_exports_own_result(
+    source: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    held_locks: list[int],
+    refused: str,
+    outcome: str,
+) -> None:
+    output = source.parents[1] / "edited"
+    unlink = os.unlink
+
+    def refuse_to_unlink(path: str | os.PathLike[str], *args: Any, **kwargs: Any) -> None:
+        if os.path.basename(path) == refused:
+            raise PermissionError(errno.EACCES, "simulated permission error", str(path))
+        unlink(path, *args, **kwargs)
+
+    def fail_to_write(self: LeRobotExporter, *args: Any) -> None:
+        raise LeRobotExportError("simulated write failure")
+
+    monkeypatch.setattr(os, "unlink", refuse_to_unlink)
+    if outcome == "failure":
+        monkeypatch.setattr(LeRobotExporter, "_write", fail_to_write)
+    caplog.set_level(logging.WARNING, logger=lerobot_exporter.__name__)
+
+    result = LeRobotExporter(source, output).export_episodes([0])
+
+    if outcome == "success":
+        assert result.success, result.error
+    else:
+        assert result.success is False
+        assert "simulated write failure" in result.error
+    refusals = [
+        record.exc_info[1]
+        for record in caplog.records
+        if record.exc_info and isinstance(record.exc_info[1], PermissionError)
+    ]
+    assert [os.path.basename(error.filename) for error in refusals] == [refused]
+    held_locks.append(hold_lock(output))

@@ -18,12 +18,13 @@ import contextlib
 import copy
 import errno
 import json
+import logging
 import math
 import os
 import shutil
 import stat
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fractions import Fraction
@@ -63,6 +64,8 @@ from .lerobot_language import (
     subtask_rows,
 )
 from .lerobot_loader import LeRobotDatasetInfo, LeRobotLoader, LeRobotLoaderError
+
+logger = logging.getLogger(__name__)
 
 STATE_FEATURE = "observation.state"
 ADJUSTED_STATE = "adjusted.observation.state"
@@ -535,6 +538,12 @@ def _published(directory: Path, publication: _Publication) -> bool:
     return last is not None and _owned(directory, last, recorded)
 
 
+def _log_cleanup_error(function: Callable[..., object], path: str, error: BaseException) -> None:
+    """Log what the export's cleanup couldn't remove, so ``shutil.rmtree`` carries on with the rest."""
+    if not isinstance(error, FileNotFoundError):
+        logger.warning("Couldn't remove %s after an export", path, exc_info=error)
+
+
 def _recover(directory: Path) -> None:
     """Remove what an export that stopped partway left in a directory this export has locked.
 
@@ -706,8 +715,12 @@ class LeRobotExporter:
                 if claim is not None and (
                     published or publication is None or not _left_in_place(self.dst_path, publication)
                 ):
-                    shutil.rmtree(claim, ignore_errors=True)
-                _release_lock(lock, self.dst_path / LOCK_FILE)
+                    shutil.rmtree(claim, onexc=_log_cleanup_error)
+                # _release_lock closes the descriptor even when it raises, so the export keeps its own result.
+                try:
+                    _release_lock(lock, self.dst_path / LOCK_FILE)
+                except OSError:
+                    logger.warning("Cleaning up the export lock in %s failed", self.dst_path, exc_info=True)
                 if created and not published:
                     with contextlib.suppress(OSError):
                         self.dst_path.rmdir()
