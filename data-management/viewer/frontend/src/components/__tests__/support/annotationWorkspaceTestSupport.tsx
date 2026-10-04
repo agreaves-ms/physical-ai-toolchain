@@ -26,7 +26,7 @@ const hoisted = vi.hoisted(() => {
     autoPlay: false,
     autoLoop: false,
     subtasks: [{ id: 'subtask-1', frameRange: [2, 6] as [number, number] }],
-    recordedSubtasks: [] as RecordedSubtask[],
+    recordedSubtasks: [] as RecordedSubtask[] | undefined,
   }
 
   const clearDiagnosticEvents = vi.fn((channel?: string) => {

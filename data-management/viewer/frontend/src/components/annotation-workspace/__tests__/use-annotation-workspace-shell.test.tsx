@@ -76,4 +76,12 @@ describe('useAnnotationWorkspaceShell', () => {
       },
     ])
   })
+
+  it('starts the edit store with no subtasks when the episode records none', () => {
+    testState.recordedSubtasks = undefined
+
+    renderHookWithProviders(() => useAnnotationWorkspaceShell({}))
+
+    expect(mockInitializeEdit).toHaveBeenLastCalledWith('dataset-1', 0, 'principal-test', [])
+  })
 })
