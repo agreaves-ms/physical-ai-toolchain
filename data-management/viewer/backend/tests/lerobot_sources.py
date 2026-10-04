@@ -193,6 +193,6 @@ def stop_export(source: Path, output: Path, stop: str) -> None:
 
 def hold_lock(directory: Path) -> int:
     """Lock ``directory`` as another running export would, and return the descriptor to close."""
-    fd = os.open(directory / LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o666)
+    fd = os.open(directory / LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
     assert _try_lock(fd), "another export already holds the lock"
     return fd

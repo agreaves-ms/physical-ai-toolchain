@@ -370,7 +370,7 @@ def _lock(directory: Path) -> int:
     path = directory / LOCK_FILE
     for _ in range(_LOCK_ATTEMPTS):
         try:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         except OSError as error:
             raise LeRobotExportError(f"the output directory can't be locked: {error}") from error
         try:
