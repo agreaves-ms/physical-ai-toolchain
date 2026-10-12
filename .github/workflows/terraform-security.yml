@@ -13,6 +13,15 @@ on:
         required: false
         type: boolean
         default: true
+    outputs:
+      work-status: {description: Execution status, value: '${{ jobs.checkov.outputs.work-status }}'}
+      expected-count: {description: Expected operations, value: '${{ jobs.checkov.outputs.expected-count }}'}
+      executed-count: {description: Executed operations, value: '${{ jobs.checkov.outputs.executed-count }}'}
+      artifact-id: {description: Evidence artifact ID, value: '${{ jobs.checkov.outputs.artifact-id }}'}
+      artifact-url: {description: Evidence artifact URL, value: '${{ jobs.checkov.outputs.artifact-url }}'}
+      test-count: {description: Executed tests, value: '${{ jobs.checkov.outputs.test-count }}'}
+      skipped-count: {description: Skipped operations, value: '${{ jobs.checkov.outputs.skipped-count }}'}
+      first-failure: {description: First failed operation, value: '${{ jobs.checkov.outputs.first-failure }}'}
 
 permissions:
   contents: read
@@ -21,6 +30,16 @@ jobs:
   checkov:
     name: Checkov
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      work-status: ${{ steps.outcome.outputs.work-status }}
+      expected-count: ${{ steps.outcome.outputs.expected-count }}
+      executed-count: ${{ steps.outcome.outputs.executed-count }}
+      artifact-id: ${{ steps.outcome.outputs.artifact-id }}
+      artifact-url: ${{ steps.outcome.outputs.artifact-url }}
+      test-count: ${{ steps.outcome.outputs.test-count }}
+      skipped-count: ${{ steps.outcome.outputs.skipped-count }}
+      first-failure: ${{ steps.outcome.outputs.first-failure }}
     permissions:
       contents: read
       security-events: write
@@ -32,7 +51,7 @@ jobs:
 
       - name: Run Checkov
         id: checkov
-        uses: bridgecrewio/checkov-action@444c9db6fa75e2d9c19ebf1fde7322089be9009e # v12.3125.0
+        uses: bridgecrewio/checkov-action@7b1bd992e2c40a3404e3511944aeb8d014703d9a # v12.3129.0
         continue-on-error: ${{ inputs.soft-fail }}
         with:
           directory: ${{ inputs.working-directory }}
@@ -43,7 +62,7 @@ jobs:
 
       - name: Upload SARIF to GitHub code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: results.sarif
           category: checkov
@@ -55,3 +74,14 @@ jobs:
           name: checkov-sarif
           path: results.sarif
           retention-days: 30
+
+      - name: Publish execution evidence
+        id: outcome
+        if: always()
+        uses: ./.github/actions/ci-outcome
+        with:
+          workflow: terraform-security
+          steps-json: ${{ toJSON(steps) }}
+          required-steps: '["checkov"]'
+          reports: '[{"path":"results.sarif","kind":"sarif","tool":"Checkov"}]'
+          fail-on-error: ${{ !inputs.soft-fail }}

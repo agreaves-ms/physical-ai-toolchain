@@ -3,7 +3,7 @@ sidebar_position: 4
 title: Workflow Permissions
 description: GitHub Actions permission scopes and OSSF Scorecard Token-Permissions exception rationale
 author: Microsoft Robotics-AI Team
-ms.date: 2026-08-18
+ms.date: 2026-10-05
 ms.topic: reference
 keywords:
   - security
@@ -13,18 +13,71 @@ keywords:
   - token-permissions
 ---
 
+GitHub Actions permission and command-interpolation controls for workflows and composite actions in this repository.
+
 ## 📋 Overview
 
-All GitHub Actions workflows in this repository follow the [OpenSSF Scorecard Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) principle:
+All workflows follow the [OpenSSF Scorecard Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) principle:
 
 - Top-level `permissions:` is `contents: read` (read-only by default).
-- Write-scoped permissions are declared at the **job level** only when a specific step requires them.
+- Jobs under a populated workflow-level grant declare their own `permissions:` block, including read-only jobs.
+- Write-scoped permissions are declared at the job level only when a specific step requires them.
 - No workflow grants `permissions: write-all` or omits an explicit top-level `permissions:` block.
 
-> [!NOTE]
-> `scripts/security/Test-WorkflowPermissions.ps1` fails any workflow missing a top-level `permissions:` block, and `scripts/security/Test-DangerousWorkflow.ps1` flags untrusted interpolation (including `${{ github.head_ref }}` and selected `${{ github.event.* }}` contexts) in `run:` steps and `pull_request_target` checkouts of untrusted pull-request code. Both linters run under `npm run test:ps` (and in CI via the Pester suite); both linters also run standalone in `workflow-permissions-scan.yml`.
+An empty workflow-level `permissions: {}` block grants no token scopes. Jobs that inherit this empty grant pass without a redundant job-level block; jobs that declare permissions remain explicit.
+
+## 🔍 Enforced Rules
+
+| Script                                          | Rule                                                                                                                                                                       |
+|-------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `scripts/security/Test-WorkflowPermissions.ps1` | Reject workflows without top-level permissions and jobs that implicitly inherit a populated workflow-level grant.                                                         |
+| `scripts/security/Test-DangerousWorkflow.ps1`   | Reject direct interpolation of attacker-controlled event values or non-boolean inputs into `run` and `actions/github-script`, plus untrusted `pull_request_target` checkout. |
+
+Both linters run under `npm run test:ps` and standalone in `workflow-permissions-scan.yml`.
+
+Map non-boolean inputs to a step-level environment variable before using them in shell or script code:
+
+```yaml
+- name: Run command
+  env:
+    COMMAND: ${{ inputs.command }}
+  run: ./tool --command "$COMMAND"
+```
+
+Boolean inputs may be interpolated directly because they resolve only to `true` or `false`.
 
 This document enumerates every job-scoped `security-events`, `contents`, and `attestations` write grant across `.github/workflows/` and records the justification so security auditors and Scorecard reviewers can verify each exception.
+
+## 🔀 Merge Queue Trust Boundary
+
+The aggregate PR Validation workflow handles both `pull_request` and
+`merge_group` events. Reusable workflows remain `workflow_call`-only. The
+aggregate checks out the tested `github.sha`, verifies an immutable change
+range, and runs all selectors when it cannot prove that range.
+
+Merge-group execution changes OIDC claims such as `event_name`, `ref`, and
+`sub`. Before enabling the hosted queue, map every queue-reachable
+`id-token: write` grant to its consuming step and provider. Retain dated
+provider evidence for these restrictions:
+
+| Claim or boundary   | Required evidence                                      |
+|---------------------|--------------------------------------------------------|
+| Repository          | Only `microsoft/physical-ai-toolchain` is accepted      |
+| Event               | The intended `merge_group` identity is accepted         |
+| Ref or subject      | Queue refs are bounded without accepting unrelated refs |
+| Audience            | The expected provider audience is required              |
+| Reusable workflow   | `job_workflow_ref` identifies the intended workflow     |
+| Negative validation | An out-of-scope identity is rejected                     |
+
+Use a provider configuration export, screenshot, or administrator attestation.
+If the provider cannot express the required boundary, change the workflow so
+the queue does not reach that token consumer and rerun the CI contracts.
+Inaccessible provider policy blocks hosted activation.
+
+The CI contract rejects secret references in workflows reachable from the
+aggregate PR Validation workflow. Add no merge-group-reachable secret or
+write-scoped permission without updating the contract, tests, and this
+inventory.
 
 ## 🔒 Job-Scoped Write Permissions
 

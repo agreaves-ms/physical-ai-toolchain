@@ -3,7 +3,7 @@ sidebar_position: 5
 title: Cluster Setup
 description: Kubernetes service deployment, AzureML extension, and OSMO platform configuration
 author: Microsoft Robotics-AI Team
-ms.date: 2026-10-01
+ms.date: 2026-10-03
 ms.topic: how-to
 keywords:
   - cluster-setup
@@ -71,7 +71,7 @@ kubectl cluster-info
 <!-- -->
 
 > [!NOTE]
-> **Supported OSMO version.** This repository targets one OSMO release, **6.3** (chart `1.3.0`, image `6.3.0`; see [Component Inventory](../contributing/component-updates.md#component-inventory)). Support follows the current upstream release, and older versions aren't maintained here. To move an older install to 6.3, see [Upgrade from Earlier OSMO Releases](#-upgrade-from-earlier-osmo-releases).
+> **Supported OSMO version.** This repository targets one OSMO release, **6.3** (chart `1.3.1`, image `6.3.1`; see [Component Inventory](../contributing/component-updates.md#component-inventory)). Support follows the current upstream release, and older versions aren't maintained here. To move an older install to 6.3, see [Upgrade from Earlier OSMO Releases](#-upgrade-from-earlier-osmo-releases).
 
 ## 🔐 Deployment Scenarios
 
@@ -211,7 +211,7 @@ kubectl get sa -n osmo-control-plane osmo-control-plane -o yaml | grep azure.wor
 - [OSMO Upgrade from Pre-6.3 Releases](osmo-upgrade.md): staged upgrade, backups, and rollback
 - [Cleanup and Destroy](cleanup.md): resource teardown procedures
 
-<!-- markdownlint-disable MD036 -->
-*🤖 Crafted with precision by ✨Copilot following brilliant human instruction,
-then carefully refined by our team of discerning human reviewers.*
-<!-- markdownlint-enable MD036 -->
+---
+
+🤖 Crafted with precision by ✨Copilot following brilliant human instruction,
+then carefully refined by our team of discerning human reviewers.
