@@ -1,30 +1,31 @@
 ---
 sidebar_position: 5
 title: LeRobot Training
-description: Behavioral cloning training with ACT and Diffusion policies on Azure ML and OSMO platforms
+description: Behavioral cloning with ACT and Diffusion policies and SmolVLA fine-tuning on Azure ML, OSMO, and the local OSMO profile
 author: Microsoft Robotics-AI Team
-ms.date: 2026-09-07
+ms.date: 2026-10-14
 ms.topic: how-to
 keywords:
   - lerobot
   - behavioral cloning
   - act
   - diffusion
+  - smolvla
   - azureml
   - osmo
   - training
 ---
 
-LeRobot behavioral cloning training for ACT and Diffusion policy architectures. Training runs on Azure ML and OSMO platforms using HuggingFace Hub, Azure Blob, and AzureML data asset sources (Azure ML only), with MLflow experiment tracking.
+LeRobot behavioral cloning training for ACT and Diffusion policy architectures, plus SmolVLA fine-tuning on OSMO. Training runs on Azure ML and OSMO platforms using HuggingFace Hub, Azure Blob, and AzureML data asset sources (Azure ML only), or local datasets on a workstation running the [local OSMO profile](https://github.com/microsoft/physical-ai-toolchain/blob/main/infrastructure/local/README.md), with MLflow experiment tracking.
 
 ## 📋 Prerequisites
 
-| Component         | Requirement                                                                                                                    |
-|-------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| Infrastructure    | AKS cluster deployed via [Infrastructure Guide](https://github.com/microsoft/physical-ai-toolchain/blob/main/deploy/README.md) |
-| Azure ML or OSMO  | At least one platform configured (see Platform Selection section)                                                              |
-| NVIDIA driver     | Release 580 or newer for the CUDA 13.0 LeRobot runtime images                                                                  |
-| HuggingFace token | Required only for private HuggingFace datasets (`hf_token` credential); Azure Blob and Data Asset sources use managed identity |
+| Component         | Requirement                                                                                                                                                                                                                                                                    |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Infrastructure    | AKS cluster deployed via [Infrastructure Guide](https://github.com/microsoft/physical-ai-toolchain/blob/main/deploy/README.md), or a workstation running the [local OSMO profile](https://github.com/microsoft/physical-ai-toolchain/blob/main/infrastructure/local/README.md) |
+| Azure ML or OSMO  | At least one platform configured (see Platform Selection section)                                                                                                                                                                                                              |
+| NVIDIA driver     | Release 580 or newer for the CUDA 13.0 LeRobot runtime images                                                                                                                                                                                                                  |
+| HuggingFace token | Required only for private HuggingFace datasets (`hf_token` credential); Azure Blob and Data Asset sources use managed identity                                                                                                                                                 |
 
 ## 🚀 Quick Start
 
@@ -42,6 +43,19 @@ LeRobot behavioral cloning training for ACT and Diffusion policy architectures. 
   -d lerobot/aloha_sim_insertion_human
 ```
 
+### Local Workstation (OSMO)
+
+Train from a dataset in the workstation's datasets directory and track the run in the local MLflow server:
+
+```bash
+./scripts/submit-osmo-lerobot-training.sh \
+  --profile local \
+  --local-dataset my-learner-dataset \
+  -r my-act-policy
+```
+
+See [Local Datasets](#local-datasets-osmo-local-profile) for preparing datasets.
+
 ### End-to-End Pipeline (OSMO)
 
 Train, evaluate, and register in one command:
@@ -55,12 +69,13 @@ Train, evaluate, and register in one command:
 
 ## 🧠 Policy Architectures
 
-| Architecture | Type                              | Strengths                                 |
-|--------------|-----------------------------------|-------------------------------------------|
-| ACT          | Action Chunking with Transformers | Multi-step prediction, temporal coherence |
-| Diffusion    | Denoising Diffusion Policy        | Multi-modal action distributions          |
-| GR00T-N1.5   | Vision-Language-Action Foundation | Multi-embodiment, language-conditioned    |
-| GR00T-N1.7   | Vision-Language-Action Foundation | N1.5 + improved modality config pipeline  |
+| Architecture | Type                               | Strengths                                 |
+|--------------|------------------------------------|-------------------------------------------|
+| ACT          | Action Chunking with Transformers  | Multi-step prediction, temporal coherence |
+| Diffusion    | Denoising Diffusion Policy         | Multi-modal action distributions          |
+| SmolVLA      | Vision-Language-Action, fine-tuned | Compact, language-conditioned, one GPU    |
+| GR00T-N1.5   | Vision-Language-Action Foundation  | Multi-embodiment, language-conditioned    |
+| GR00T-N1.7   | Vision-Language-Action Foundation  | N1.5 + improved modality config pipeline  |
 
 Select the architecture with `--policy-type`:
 
@@ -70,6 +85,9 @@ Select the architecture with `--policy-type`:
 
 # Diffusion policy
 ./scripts/submit-osmo-lerobot-training.sh -d user/dataset -p diffusion
+
+# SmolVLA fine-tuning (OSMO)
+./scripts/submit-osmo-lerobot-training.sh -d user/dataset -p smolvla
 
 # GR00T-N1.5 fine-tuning (VLA — separate script)
 ./training/vla/scripts/submit-osmo-lerobot-vla-fine-tuning.sh \
@@ -90,31 +108,35 @@ Select the architecture with `--policy-type`:
 
 ## ⚖️ Platform Selection
 
-| Aspect              | Azure ML                                            | OSMO                                      |
-|---------------------|-----------------------------------------------------|-------------------------------------------|
-| Submission          | `az ml job create`                                  | `osmo workflow submit`                    |
-| Experiment tracking | MLflow (managed)                                    | MLflow (Azure ML backend)                 |
-| Credential handling | Azure ML environment variables                      | `osmo credential set` injection           |
-| Dataset delivery    | HuggingFace Hub, Azure Blob, or AzureML data assets | HuggingFace Hub or direct Azure Blob URLs |
-| Pipeline support    | Manual multi-step                                   | `run-lerobot-pipeline.sh` orchestration   |
+| Aspect              | Azure ML                                            | OSMO                                                                       |
+|---------------------|-----------------------------------------------------|----------------------------------------------------------------------------|
+| Submission          | `az ml job create`                                  | `osmo workflow submit`                                                     |
+| Experiment tracking | MLflow (managed)                                    | MLflow (Azure ML backend, or the local MLflow server on the local profile) |
+| Credential handling | Azure ML environment variables                      | `osmo credential set` injection                                            |
+| Dataset delivery    | HuggingFace Hub, Azure Blob, or AzureML data assets | HuggingFace Hub, direct Azure Blob URLs, or local datasets (local profile) |
+| Pipeline support    | Manual multi-step                                   | `run-lerobot-pipeline.sh` orchestration                                    |
 
 ## ⚙️ Training Configuration
 
-| Parameter                  | Default                                              | Description                                                                                                     |
-|----------------------------|------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| `--dataset-repo-id`        | Required for HuggingFace; `dataset` for Blob sources | HuggingFace dataset repository or logical local dataset name                                                    |
-| `--blob-url`               | (none)                                               | Direct Azure Blob dataset URL; repeat for multiple sources                                                      |
-| `--policy-type`            | `act`                                                | Policy: `act`, `diffusion`                                               , or `groot`                           |
-| `--job-name`               | `lerobot-act-training`                               | Job identifier                                                                                                  |
-| `--image`                  | `pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime`     | Container image                                                                                                 |
-| `--training-steps`         | `100000`                                             | Total training iterations                                                                                       |
-| `--batch-size`             | `32`                                                 | Training batch size                                                                                             |
-| `--save-freq`              | `5000`                                               | Checkpoint save frequency                                                                                       |
-| `--policy-repo-id`         | (none)                                               | Pre-trained policy for fine-tuning                                                                              |
-| `--init-from-policy-model` | (none)                                               | Warm-start from a registered AzureML model (`azureml:NAME:VERSION`); AzureML only                               |
-| `--num-gpus`               | `1`                                                  | GPUs requested per task; enables Accelerate multi-GPU launch when >1; OSMO only                                 |
-| `--mixed-precision`        | `no`                                                 | Accelerate mixed-precision mode (`no`/`fp16`/`bf16`); effective with more than one visible GPU                  |
-| `--platform`               | `gpu_platform`                                       | OSMO platform binding the GPU node pool; use `gpu_platform_2x` for 2x A100 nodes with `--num-gpus 2`; OSMO only |
+| Parameter                  | Default                                                                    | Description                                                                                                     |
+|----------------------------|----------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| `--dataset-repo-id`        | Required for HuggingFace; `dataset` for Blob sources                       | HuggingFace dataset repository or logical local dataset name                                                    |
+| `--blob-url`               | (none)                                                                     | Direct Azure Blob dataset URL; repeat for multiple sources                                                      |
+| `--local-dataset`          | (none)                                                                     | Dataset folder in the profile's datasets directory, mounted read-only; OSMO local profile                       |
+| `--policy-type`            | `act`                                                                      | Policy: `act`, `diffusion`, or `smolvla` (OSMO); GR00T uses its own submission script                           |
+| `--job-name`               | `lerobot-<policy-type>-training` (OSMO), `lerobot-act-training` (Azure ML) | Job identifier                                                                                                  |
+| `--image`                  | `pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime`                           | Container image                                                                                                 |
+| `--training-steps`         | `100000`                                                                   | Total training iterations                                                                                       |
+| `--batch-size`             | `32`                                                                       | Training batch size                                                                                             |
+| `--save-freq`              | `5000`                                                                     | Checkpoint save frequency                                                                                       |
+| `--policy-repo-id`         | (none)                                                                     | Repository ID recorded on the trained policy; Hub push stays off                                                |
+| `--policy-path`            | `lerobot/smolvla_base` for `smolvla`                                       | Pretrained policy to fine-tune: Hub repository or container path; OSMO only                                     |
+| `--policy-path-revision`   | Pinned base commit for `smolvla`                                           | Commit SHA that pins a Hub `--policy-path`; required for Hub repositories                                       |
+| `--rename-map`             | (none)                                                                     | JSON map from dataset feature keys to the pretrained policy's keys; OSMO only                                   |
+| `--init-from-policy-model` | (none)                                                                     | Warm-start from a registered AzureML model (`azureml:NAME:VERSION`); AzureML only                               |
+| `--num-gpus`               | `1`                                                                        | GPUs requested per task; enables Accelerate multi-GPU launch when >1; OSMO only                                 |
+| `--mixed-precision`        | `no`                                                                       | Accelerate mixed-precision mode (`no`/`fp16`/`bf16`); effective with more than one visible GPU                  |
+| `--platform`               | `gpu_platform`                                                             | OSMO platform binding the GPU node pool; use `gpu_platform_2x` for 2x A100 nodes with `--num-gpus 2`; OSMO only |
 
 ### Multi-GPU Training (OSMO)
 
@@ -132,13 +154,33 @@ The cluster must provide a node pool with a multi-GPU SKU and a matching OSMO pl
 
 ### Fine-Tuning from Existing Policy
 
+Pass the pretrained policy as `--policy-path`. A Hub repository needs the commit SHA that pins it, because LeRobot's `--policy.path` takes no revision; the job downloads that snapshot and fine-tunes from it. A path inside the container needs no revision.
+
 ```bash
 ./scripts/submit-osmo-lerobot-training.sh \
   -d user/my-dataset \
-  --policy-repo-id user/pretrained-act \
+  --policy-path user/pretrained-act \
+  --policy-path-revision "<policy-commit-sha>" \
   --training-steps 50000 \
   --batch-size 16
 ```
+
+### SmolVLA Fine-Tuning (OSMO)
+
+`-p smolvla` fine-tunes [`lerobot/smolvla_base`](https://huggingface.co/lerobot/smolvla_base) at the commit pinned in `scripts/lib/common.sh` unless `--policy-path` names another checkpoint. The job installs LeRobot from `training/vla/lerobot/uv.lock`, which carries the `smolvla` extra.
+
+The base model expects camera features named `observation.images.camera1` through `camera3`. Map the dataset's cameras onto those names with `--rename-map`; SmolVLA leaves out any camera the dataset lacks:
+
+```bash
+./scripts/submit-osmo-lerobot-training.sh \
+  --profile local \
+  --local-dataset my-learner-dataset \
+  -p smolvla \
+  --rename-map '{"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
+  --batch-size 8
+```
+
+The base model works with states and actions up to 32 dimensions and pads smaller ones.
 
 ### Checkpoint Compatibility
 
@@ -195,9 +237,9 @@ Azure ML uses workspace-managed identity. Set environment variables for custom c
 
 Azure ML training uses workspace MLflow automatically. OSMO LeRobot workflows log to the same Azure ML workspace resolved from Terraform outputs or the `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, and `AZUREML_WORKSPACE_NAME` environment variables.
 
-Both submission scripts pin `policy.push_to_hub=false`. Checkpoints are registered to the Azure ML model registry when `--register-checkpoint NAME` is passed; HuggingFace Hub upload is never used.
+Both submission scripts pin `policy.push_to_hub=false`. Checkpoints are registered to the tracking backend's model registry when `--register-checkpoint NAME` is passed; HuggingFace Hub upload is never used. The local profile logs runs and registers checkpoints in its in-cluster MLflow server.
 
-See [Experiment Tracking](experiment-tracking.md) for platform comparison and configuration details.
+`TRACKING_BACKEND` in the job environment can redirect runs and registrations to a self-hosted MLflow server (`mlflow`) or turn them off (`none`). See [Experiment Tracking](experiment-tracking.md) for the backends, platform comparison, and configuration details.
 
 ## 💾 Dataset Workflows
 
@@ -205,7 +247,7 @@ Supported dataset delivery differs by platform.
 
 | Platform | Supported sources                                                                                     |
 |----------|-------------------------------------------------------------------------------------------------------|
-| OSMO     | HuggingFace Hub or Azure Blob                                                                         |
+| OSMO     | HuggingFace Hub, Azure Blob, or local datasets on the local profile                                   |
 | Azure ML | HuggingFace Hub, direct Azure Blob URLs, AzureML data assets, or combined Blob and data asset sources |
 
 ### HuggingFace Hub (Default)
@@ -238,6 +280,18 @@ Use multiple `--blob-url` values to merge compatible datasets before training:
 
 > [!IMPORTANT]
 > OSMO accepts plain HTTPS Azure Blob URLs only. OSMO authenticates with its workload identity; grant that identity `Storage Blob Data Reader`, `Storage Blob Data Contributor`, or `Storage Blob Data Owner` on each storage account or container. AzureML data asset identifiers, datastore URIs, ADLS Gen2 URLs, Azure Files, OneLake, local paths, fragments, and any query string (including SAS tokens) are rejected.
+
+### Local Datasets (OSMO, Local Profile)
+
+On the [local OSMO profile](https://github.com/microsoft/physical-ai-toolchain/blob/main/infrastructure/local/README.md), every task mounts the workstation's datasets directory read-only at `/mnt/datasets`. Pass a dataset folder name with `--local-dataset`, and the job trains from `/mnt/datasets/<name>` without a download:
+
+```bash
+./scripts/submit-osmo-lerobot-training.sh \
+  --profile local \
+  --local-dataset my-learner-dataset
+```
+
+Prepare the folder with [infrastructure/local/datasets.sh](https://github.com/microsoft/physical-ai-toolchain/blob/main/infrastructure/local/datasets.sh), which imports a dataset or derives a learner dataset from validated captures without their privileged features. Checkpoints record the dataset as local lineage in the tracking backend.
 
 ### Azure Blob Storage (AzureML)
 
