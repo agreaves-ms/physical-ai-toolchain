@@ -36,9 +36,11 @@ is judged as rollout videos):
 
 JUDGE:
         --backend NAME            qwen3-vl (default), openai-compat, or echo
-        --model-id ID             Model (default: $DEFAULT_VLM_JUDGE_MODEL)
+        --model-id ID             Hub model, or a model directory in the task given as an absolute
+                                  path (default: $DEFAULT_VLM_JUDGE_MODEL)
         --model-revision SHA      Hugging Face commit SHA that pins the model (default: pinned for
-                                  the default model; required for another Hub model)
+                                  the default model; required for another Hub model; omitted for
+                                  a model directory)
         --base-url URL            OpenAI-compatible endpoint (openai-compat backend)
         --n-frames N              Frames sampled per episode (default: 12)
 
@@ -159,7 +161,12 @@ if [[ "$backend" == "qwen3-vl" ]]; then
   if [[ "$model_id" == "$DEFAULT_VLM_JUDGE_MODEL" ]]; then
     model_revision="${model_revision:-$DEFAULT_VLM_JUDGE_MODEL_REVISION}"
   fi
-  require_hf_pin "$model_id" "$model_revision" "--model-revision"
+  # The judge loads an absolute, ./, or ../ model path as a local directory and rejects a revision for it.
+  if [[ "$model_id" == /* || "$model_id" == ./* || "$model_id" == ../* ]]; then
+    [[ -z "$model_revision" ]] || fatal "--model-revision does not apply to the model directory $model_id; omit it"
+  else
+    require_hf_pin "$model_id" "$model_revision" "--model-revision"
+  fi
 fi
 [[ "$n_frames" =~ ^[1-9][0-9]*$ ]] || fatal "--n-frames must be a positive integer (got: $n_frames)"
 [[ -z "$limit" || "$limit" =~ ^[1-9][0-9]*$ ]] || fatal "--limit must be a positive integer (got: $limit)"

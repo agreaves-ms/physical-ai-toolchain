@@ -347,4 +347,24 @@ Describe 'VLM judge inputs at submission' -Tag 'Unit' -Skip:(-not $script:ToolsP
         $result.ExitCode | Should -Not -Be 0
         $result.StdErr | Should -Match '--model-revision'
     }
+
+    It 'Loads a model directory in the task without a revision' {
+        $result = Invoke-SubmitPreview -ScriptPath 'evaluation/vlm_judge/scripts/submit-osmo-judge.sh' -Arguments @(
+            '--profile', 'local', '--local-dataset', 'so101/pick', '--model-id', '/mnt/cache/models/qwen3-vl')
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        $result.StdOut | Should -Match 'Model:\s+/mnt/cache/models/qwen3-vl\s*\r?\n'
+    }
+
+    It 'Rejects a revision for a model directory, which the judge would refuse at run time' -ForEach @(
+        @{ ModelId = '/mnt/cache/models/qwen3-vl' }
+        @{ ModelId = './models/qwen3-vl' }
+    ) {
+        $result = Invoke-SubmitPreview -ScriptPath 'evaluation/vlm_judge/scripts/submit-osmo-judge.sh' -Arguments @(
+            '--profile', 'local', '--local-dataset', 'so101/pick', '--model-id', $ModelId,
+            '--model-revision', 'ebb281ec70b05090aa6165b016eac8ec08e71b17')
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdErr | Should -Match ([regex]::Escape("--model-revision does not apply to the model directory $ModelId"))
+    }
 }
