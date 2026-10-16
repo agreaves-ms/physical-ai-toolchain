@@ -146,6 +146,53 @@ def test_shared_episode_data_and_video_are_bounded(tmp_path: Path) -> None:
     assert [int(frame[0, 0, 0]) for frame in sliced] == [2, 3, 4]
 
 
+def test_camera_keys_include_every_recorded_camera() -> None:
+    features = {
+        "observation.state": {"dtype": "float32"},
+        "observation.images.scene": {"dtype": "video"},
+        "observation.images.tool": {"dtype": "video"},
+        "action": {"dtype": "float32"},
+    }
+
+    assert _MOD._camera_keys(features) == ["observation.images.scene", "observation.images.tool"]
+
+
+def test_replay_observation_carries_the_state_and_every_camera() -> None:
+    frames = {
+        "observation.images.scene": [np.full((2, 3, 3), 255, dtype=np.uint8)],
+        "observation.images.tool": [np.zeros((2, 3, 3), dtype=np.uint8)],
+    }
+
+    obs = _MOD._replay_observation(np.arange(7, dtype=np.float32), frames, 0)
+
+    assert sorted(obs) == ["observation.images.scene", "observation.images.tool", "observation.state"]
+    assert tuple(obs["observation.images.scene"].shape) == (3, 2, 3)
+    assert float(obs["observation.images.scene"].max()) == 1.0
+    assert float(obs["observation.images.tool"].max()) == 0.0
+    assert obs["observation.state"].tolist() == list(range(7))
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("", None),
+        ("  ", None),
+        (
+            '{"observation.images.external": "observation.images.camera1"}',
+            {"observation.images.external": "observation.images.camera1"},
+        ),
+    ],
+)
+def test_parse_rename_map(raw: str, expected: dict | None) -> None:
+    assert _MOD._parse_rename_map(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ['["observation.images.external"]', '{"observation.images.external": 1}'])
+def test_parse_rename_map_rejects_non_string_mappings(raw: str) -> None:
+    with pytest.raises(ValueError, match="RENAME_MAP must be a JSON object"):
+        _MOD._parse_rename_map(raw)
+
+
 def test_write_vla_schema_v1_emits_strict_contract(tmp_path: Path) -> None:
     _MOD._write_vla_schema_v1(
         output_dir=tmp_path,
@@ -239,3 +286,68 @@ def test_write_vla_schema_v1_rejects_non_finite_metrics(tmp_path: Path) -> None:
             dataset_repo_id="owner/dataset",
             policy_repo_id="owner/policy",
         )
+
+
+def test_seed_replay_reproduces_policy_noise() -> None:
+    import torch
+
+    _MOD._seed_replay(0)
+    first = (torch.randn(4), np.random.rand(4))
+    _MOD._seed_replay(0)
+    second = (torch.randn(4), np.random.rand(4))
+
+    assert torch.equal(first[0], second[0])
+    assert np.array_equal(first[1], second[1])
+
+
+def test_aggregate_metrics_averages_evaluated_episodes() -> None:
+    episodes = [
+        {"mse": 1.0, "mae": 0.5, "avg_inference_ms": 10.0, "throughput_hz": 100.0},
+        {"mse": 3.0, "mae": 1.5, "avg_inference_ms": 30.0, "throughput_hz": 50.0},
+    ]
+
+    assert _MOD._aggregate_metrics(episodes) == {
+        "mse": 2.0,
+        "mae": 1.0,
+        "avg_inference_ms": 20.0,
+        "throughput_hz": 75.0,
+    }
+
+
+def test_aggregate_metrics_rejects_an_evaluation_without_episodes() -> None:
+    with pytest.raises(ValueError, match="No episode was evaluated"):
+        _MOD._aggregate_metrics([])
+
+
+class _RecordingMlflow:
+    def __init__(self) -> None:
+        self.metrics: dict[str, float] = {}
+        self.artifacts: list[str] = []
+
+    def log_metrics(self, metrics: dict[str, float]) -> None:
+        self.metrics.update(metrics)
+
+    def log_artifact(self, path: str) -> None:
+        self.artifacts.append(Path(path).name)
+
+
+def test_log_evaluation_results_records_the_evaluated_count_and_schema_artifacts(tmp_path: Path) -> None:
+    for name in ("eval_results.json", "metrics.json", "failure_cases.jsonl"):
+        (tmp_path / name).write_text("{}\n", encoding="utf-8")
+    recorder = _RecordingMlflow()
+
+    _MOD._log_evaluation_results(
+        recorder,
+        tmp_path,
+        aggregate={"mse": 2.0, "mae": 1.0, "avg_inference_ms": 20.0, "throughput_hz": 75.0},
+        episodes_evaluated=2,
+    )
+
+    assert recorder.metrics == {
+        "aggregate_mse": 2.0,
+        "aggregate_mae": 1.0,
+        "aggregate_avg_inference_ms": 20.0,
+        "aggregate_throughput_hz": 75.0,
+        "episodes_evaluated": 2,
+    }
+    assert recorder.artifacts == ["eval_results.json", "metrics.json", "failure_cases.jsonl"]
