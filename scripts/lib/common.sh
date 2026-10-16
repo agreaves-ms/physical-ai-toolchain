@@ -756,6 +756,21 @@ detect_service_url() {
   echo "$url"
 }
 
+# Print the service URL the OSMO CLI in a config directory is logged in to, or nothing.
+# Usage: osmo_login_url <osmo-config-dir>
+osmo_login_url() {
+  local login_file="${1:?OSMO config directory required}/login.yaml"
+  [[ -f "$login_file" ]] || return 0
+  awk '$1 == "url:" {print $2; exit}' "$login_file"
+}
+
+# Return 0 when the OSMO service the CLI is logged in to holds a credential with this name.
+# Usage: osmo_has_credential <name>
+osmo_has_credential() {
+  local name="${1:?credential name required}"
+  osmo credential list 2>/dev/null | awk '{print $1}' | grep -Fxq -- "$name"
+}
+
 # Log in to an OSMO service with the method it supports. A service with an identity
 # provider publishes a device endpoint for code login. A service deployed without
 # authentication, as 03-deploy-osmo.sh deploys it, publishes none and accepts only a
