@@ -453,6 +453,7 @@ fileshares
 filesystem
 Finalizer
 firewalls
+fixturenames
 flatdict
 flatmap
 flexbox
@@ -1832,3 +1833,23 @@ textareas
 unclipped
 unreviewed
 zoomable
+
+# Local OSMO profile: PostgreSQL, Valkey, RustFS, and jq terms
+appendonly
+datname
+isready
+pgdata
+pgdatabase
+pghost
+pguser
+psqlrc
+rediscli
+requirepass
+rolname
+rustfs
+slurpfile
+urandom
+valkey
+envoyproxy
+unpadded
+urlsafe
