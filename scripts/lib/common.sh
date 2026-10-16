@@ -418,6 +418,59 @@ kube_cluster_identity() {
   printf '%s\n' "$(printf '%s\n%s\n' "$server" "$namespace_uid" | calculate_sha256 /dev/stdin)"
 }
 
+# Print each kube-system Deployment and DaemonSet that has not finished rolling out, one per line, or a note
+# when there are none yet. Prints nothing when all have rolled out; fails when they cannot be listed.
+# Usage: kube_system_pending_workloads <kubectl command...>, for example: sudo /usr/local/bin/k3s kubectl
+kube_system_pending_workloads() {
+  local workloads
+  workloads=$("$@" get deployments,daemonsets --namespace kube-system --output json) || return 1
+  jq -r '
+    if (.items | length) == 0 then "no Deployments or DaemonSets yet"
+    else
+      .items[]
+      | select(
+          ((.status.observedGeneration // 0) < (.metadata.generation // 0))
+          or (if .kind == "DaemonSet" then
+                (.status.desiredNumberScheduled // 0) as $want
+                | (.status.updatedNumberScheduled // 0) != $want or (.status.numberAvailable // 0) != $want
+              else
+                (.spec.replicas // 1) as $want
+                | (.status.updatedReplicas // 0) != $want
+                  or (.status.replicas // 0) != $want
+                  or (.status.availableReplicas // 0) != $want
+              end))
+      | "\(.kind)/\(.metadata.name)"
+    end' <<< "$workloads"
+}
+
+# Wait until kube-system Deployments and DaemonSets have rolled out on two consecutive checks, so status left
+# from before a restart cannot pass alone. On timeout, reports the label and what the last check found.
+# Usage: wait_for_kube_system_workloads <label> <timeout-seconds> <interval-seconds> <kubectl command...>
+wait_for_kube_system_workloads() {
+  local label="${1:?label required}" timeout="${2:?timeout required}" interval="${3:?interval required}"
+  shift 3
+  local deadline=$((SECONDS + timeout)) settled=0 pending last_check
+  while true; do
+    if pending=$(kube_system_pending_workloads "$@"); then
+      if [[ -z "$pending" ]]; then
+        (( ++settled < 2 )) || return 0
+        last_check="they were ready on the last check, which a second check had not yet confirmed"
+      else
+        settled=0
+        last_check="${pending//$'\n'/, }"
+      fi
+    else
+      settled=0
+      last_check="the workloads could not be listed"
+    fi
+    if (( SECONDS >= deadline )); then
+      error "$label: kube-system workloads did not finish rolling out within ${timeout}s: $last_check"
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
 # Validate that a context is reachable and represents the declared cluster role.
 # Usage: verify_kube_target <kubeconfig> <context> <aks|k3s>
 verify_kube_target() {
