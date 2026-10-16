@@ -20,8 +20,6 @@ import type {
 
 import { getAuthHeaders } from './auth-headers'
 
-export const API_BASE = '/api'
-
 /** Cached CSRF token fetched from the server. */
 let _csrfToken: string | null = null
 /** In-flight CSRF token fetch promise to prevent duplicate requests. */
@@ -30,7 +28,7 @@ let _csrfTokenFetch: Promise<string> | null = null
 async function getCsrfToken(): Promise<string> {
   if (_csrfToken) return _csrfToken
   if (!_csrfTokenFetch) {
-    _csrfTokenFetch = fetch(`${API_BASE}/csrf-token`)
+    _csrfTokenFetch = fetch(apiPath('csrf-token'))
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Failed to fetch CSRF token: ${response.statusText}`)
@@ -74,8 +72,12 @@ export async function mutationFetch(
   })
 }
 
+/**
+ * Backend path for `path`, resolved against the document base so the app also works under a path
+ * prefix such as a `kubectl proxy` service URL.
+ */
 export function apiPath(path: string): string {
-  return `${API_BASE}/${path.replace(/^\/+/, '')}`
+  return `${new URL('api', document.baseURI).pathname}/${path.replace(/^\/+/, '')}`
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
@@ -150,7 +152,8 @@ function preserveDatasetFeatureKeys(raw: Record<string, unknown>): DatasetInfo {
  * trajectory variable map keys (e.g. ``observation.gripper.is_closed``) which
  * must not be camelCased so frontend lookups via ``trajectoryVariables[i].key``
  * remain valid. Also preserves the ``video_urls`` map keys so they match the
- * raw camera names returned in ``cameras`` (e.g. ``observation.images.cam_0``).
+ * raw camera names returned in ``cameras`` (e.g. ``observation.images.cam_0``),
+ * and resolves the backend's ``/api/`` video paths against the document base.
  */
 function preserveEpisodeVariableKeys(raw: Record<string, unknown>): EpisodeData {
   const rawTrajectory = raw.trajectory_data as Array<Record<string, unknown>> | undefined
@@ -168,7 +171,12 @@ function preserveEpisodeVariableKeys(raw: Record<string, unknown>): EpisodeData 
     })
   }
   if (rawVideoUrls) {
-    episode.videoUrls = { ...(rawVideoUrls as Record<string, string>) }
+    episode.videoUrls = Object.fromEntries(
+      Object.entries(rawVideoUrls as Record<string, string>).map(([camera, url]) => [
+        camera,
+        url.startsWith('/api/') ? apiPath(url.slice('/api/'.length)) : url,
+      ]),
+    )
   }
   if (rawVideoTimeWindows) {
     episode.videoTimeWindows = { ...(rawVideoTimeWindows as Record<string, [number, number]>) }

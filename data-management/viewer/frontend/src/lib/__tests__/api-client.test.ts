@@ -55,6 +55,36 @@ describe('ApiClientError', () => {
       expect(apiPath('datasets/ds-1')).toBe('/api/datasets/ds-1')
     })
 
+    describe('under a path prefix such as kubectl proxy', () => {
+      const prefix = '/api/v1/namespaces/dataviewer/services/http:dataviewer-frontend:http/proxy/'
+      let base: HTMLBaseElement
+
+      beforeEach(() => {
+        base = document.createElement('base')
+        base.href = `http://127.0.0.1:8001${prefix}`
+        document.head.append(base)
+      })
+
+      afterEach(() => {
+        base.remove()
+      })
+
+      it('resolves backend paths against the document base', () => {
+        expect(apiPath('/datasets')).toBe(`${prefix}api/datasets`)
+      })
+
+      it('requests data and the CSRF token under the prefix', async () => {
+        mockMutationFetch(jsonResponse({ ok: true }))
+
+        await mutationFetch(apiPath('datasets/ds-1/labels/save'), { method: 'POST' })
+
+        expect(mockFetch.mock.calls.map(([url]) => url)).toEqual([
+          `${prefix}api/csrf-token`,
+          `${prefix}api/datasets/ds-1/labels/save`,
+        ])
+      })
+    })
+
     it('attaches request headers and camelCases successful JSON responses', async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
@@ -230,6 +260,35 @@ describe('fetchEpisode', () => {
       'observation.images.cam_0': '/v0.mp4',
       'observation.images.wrist_cam': '/v1.mp4',
     })
+  })
+
+  it('resolves backend video paths against the document base path', async () => {
+    const base = document.createElement('base')
+    base.href = 'http://127.0.0.1:8001/proxy/'
+    document.head.append(base)
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        meta: { episode_index: 0 },
+        video_urls: {
+          'observation.images.scene':
+            '/api/datasets/ds-1/episodes/0/video/observation.images.scene?v=7',
+          external: 'https://cdn.example.com/v.mp4',
+        },
+        trajectory_data: [],
+      }),
+    )
+
+    try {
+      const result = await fetchEpisode('ds-1', 0)
+
+      expect(result.videoUrls).toEqual({
+        'observation.images.scene':
+          '/proxy/api/datasets/ds-1/episodes/0/video/observation.images.scene?v=7',
+        external: 'https://cdn.example.com/v.mp4',
+      })
+    } finally {
+      base.remove()
+    }
   })
 
   it('preserves video_time_windows camera keys and tuple values', async () => {

@@ -531,6 +531,36 @@ class TestLeRobotExports:
         cls.assert_called_once_with(dataset_dir, base / "ds-1-edited", dataset_id="ds-1")
 
     @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
+    def test_relative_output_paths_name_a_dataset_in_the_datasets_directory(
+        self,
+        client: TestClient,
+        override_service: MagicMock,
+        dataset_layout: tuple[Path, Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        endpoint: str,
+    ) -> None:
+        base, dataset_dir, _output = dataset_layout
+        override_service.dataset_is_lerobot.return_value = True
+        cls, _instance = _patch_lerobot_exporter(monkeypatch)
+
+        _post_export(client, endpoint, {"episodeIndices": [0], "outputPath": "ds-1-curated"})
+
+        cls.assert_called_once_with(dataset_dir, base / "ds-1-curated", dataset_id="ds-1")
+
+    @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
+    def test_relative_output_paths_cannot_leave_the_datasets_directory(
+        self, client: TestClient, override_service: MagicMock, monkeypatch: pytest.MonkeyPatch, endpoint: str
+    ) -> None:
+        override_service.dataset_is_lerobot.return_value = True
+        cls, _instance = _patch_lerobot_exporter(monkeypatch)
+
+        resp = client.post(f"/api/datasets/ds-1/{endpoint}", json={"episodeIndices": [0], "outputPath": "../escaped"})
+
+        assert resp.status_code == 400
+        assert "traversal" in resp.json()["detail"].lower()
+        cls.assert_not_called()
+
+    @pytest.mark.parametrize("endpoint", ["export", "export/stream"])
     @pytest.mark.parametrize("include", [True, False, None], ids=["included", "left-out", "by-default"])
     def test_lerobot_exports_get_the_latest_saved_language_instruction_unless_left_out(
         self,

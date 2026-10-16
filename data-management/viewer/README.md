@@ -648,7 +648,7 @@ Supported fields include object, pickup location, grasp outcome, place outcome, 
 
 ### Exporting edited episodes
 
-**Export** writes the current episode with its edits applied: removed and inserted frames, crop and resize, trajectory adjustments and subtasks. The source dataset is never modified, and the output path must be under the Dataviewer data directory.
+**Export** writes the current episode with its edits applied: removed and inserted frames, crop and resize, trajectory adjustments and subtasks. The source dataset is never modified, and the output path must be under the Dataviewer data directory. A relative output path is resolved against that directory, so the default, `<dataset>-export`, appears in the dataset list as a new dataset beside its source.
 
 | Source format | Export output                                                                                            |
 |---------------|----------------------------------------------------------------------------------------------------------|
@@ -807,6 +807,12 @@ Rollback by restoring the previous read-only model directory and its matching `D
 ```bash
 docker compose up -d --force-recreate backend
 ```
+
+### Local K3s Workstation
+
+The [local OSMO profile](../../infrastructure/local/README.md#-dataviewer) deploys the dataviewer into a single-node K3s cluster with `infrastructure/local/04-deploy-dataviewer.sh`. It builds both images into the workstation's loopback registry, runs the backend on the local datasets directory as that directory's owner with `DATAVIEWER_AUTH_DISABLED=true`, and exposes only ClusterIP Services.
+
+Open it through `kubectl proxy`, `kubectl port-forward`, or the pinned ClusterIP. The frontend resolves its assets and API calls against the page's own URL, so it also works under the `kubectl proxy` service path.
 
 ### Azure Kubernetes Service (AKS) / Container Apps
 

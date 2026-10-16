@@ -156,6 +156,18 @@ class ExportResultResponse(BaseModel):
     stats: dict[str, Any] = Field(default_factory=dict)
 
 
+def _resolve_output_path(service: DatasetService, requested: str) -> Path:
+    """Resolve an export directory inside the datasets directory; a relative path names a new dataset there."""
+    safe_base = os.path.realpath(service.base_path)
+    output_path_str = os.path.realpath(os.path.join(safe_base, requested.replace("\r", "").replace("\n", "")))
+    if not output_path_str.startswith(safe_base + os.sep):
+        raise HTTPException(
+            status_code=400,
+            detail="Path traversal detected: resolved path escapes base directory",
+        )
+    return Path(output_path_str)
+
+
 def _prepare_output(service: DatasetService, dataset_id: str, dataset_path: Path, output_path: Path) -> bool:
     """Validate the output path for the source's format and return whether the source is a LeRobot dataset.
 
@@ -293,15 +305,7 @@ async def export_episodes(
             detail=f"Dataset '{dataset_id}' does not have a local path for export",
         )
 
-    # Validate output path
-    safe_base = os.path.realpath(service.base_path)
-    output_path_str = os.path.realpath(request.outputPath)
-    if not output_path_str.startswith(safe_base + os.sep):
-        raise HTTPException(
-            status_code=400,
-            detail="Path traversal detected: resolved path escapes base directory",
-        )
-    output_path = Path(output_path_str)
+    output_path = _resolve_output_path(service, request.outputPath)
     lerobot = _prepare_output(service, dataset_id, dataset_path, output_path)
 
     try:
@@ -373,15 +377,7 @@ async def export_episodes_stream(
             detail=f"Dataset '{dataset_id}' does not have a local path for export",
         )
 
-    # Validate output path
-    safe_base = os.path.realpath(service.base_path)
-    output_path_str = os.path.realpath(request.outputPath)
-    if not output_path_str.startswith(safe_base + os.sep):
-        raise HTTPException(
-            status_code=400,
-            detail="Path traversal detected: resolved path escapes base directory",
-        )
-    output_path = Path(output_path_str)
+    output_path = _resolve_output_path(service, request.outputPath)
     lerobot = _prepare_output(service, dataset_id, dataset_path, output_path)
 
     async def event_generator():
