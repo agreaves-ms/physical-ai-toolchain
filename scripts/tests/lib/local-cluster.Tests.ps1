@@ -263,14 +263,19 @@ Describe 'local_run_job' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
 
     It 'Recreates the Job when the hash input changes' {
         $workDir = Join-Path $script:ArtifactsRoot ([System.Guid]::NewGuid().ToString('N'))
-        Invoke-LocalCluster -WorkDir $workDir -Lines @("local_run_job ns bootstrap '$script:JobManifest' volume-a") | Out-Null
+        $first = Invoke-LocalCluster -WorkDir $workDir -Lines @("local_run_job ns bootstrap '$script:JobManifest' volume-a")
+        $firstHash = (Get-StateJson -StateDir $first.StateDir -Name 'job.json').metadata.annotations['physical-ai-toolchain/spec-hash']
         Remove-Item -Path (Join-Path $workDir '.stubs/.calls.log') -Force
 
         $result = Invoke-LocalCluster -WorkDir $workDir -Lines @("local_run_job ns bootstrap '$script:JobManifest' volume-b")
+        $job = Get-StateJson -StateDir $result.StateDir -Name 'job.json'
 
         $result.ExitCode | Should -Be 0
         ($result.Calls | Where-Object { $_ -match ' delete job bootstrap' }).Count | Should -Be 1
-        ($result.Calls | Where-Object { $_ -match ' apply -f -' }).Count | Should -Be 1
+        # The piped create and apply stubs run concurrently and can interleave their call-log lines,
+        # so the stub's stored Job proves the apply instead.
+        $job.metadata.annotations['physical-ai-toolchain/spec-hash'] | Should -Match '^[0-9a-f]{16}$'
+        $job.metadata.annotations['physical-ai-toolchain/spec-hash'] | Should -Not -Be $firstHash
     }
 }
 
