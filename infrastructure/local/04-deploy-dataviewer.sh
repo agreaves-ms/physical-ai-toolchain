@@ -127,6 +127,7 @@ local_cluster_activate
 #------------------------------------------------------------------------------
 section "Preflight"
 
+# pinning-ignore: registry health probe; no downloaded artifact
 curl --fail --silent --show-error --connect-timeout 3 "http://$LOCAL_REGISTRY_HOST/v2/" >/dev/null \
   || fatal "The local registry does not answer at $LOCAL_REGISTRY_HOST; run 01-deploy-platform-services.sh first"
 LOCAL_CLUSTER_DNS_IP=$(kubectl -n kube-system get service kube-dns -o jsonpath='{.spec.clusterIP}')
