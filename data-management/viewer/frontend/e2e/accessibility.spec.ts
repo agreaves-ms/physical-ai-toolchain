@@ -59,7 +59,7 @@ test('V05 V06 V08 V13 V14 and V18 expose exact workspace semantics', async ({ pa
   await exportButton.click()
   const dialog = page.getByRole('dialog', { name: 'Export Episodes' })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByPlaceholder('/path/to/exports')).toBeFocused()
+  await expect(dialog.getByRole('textbox', { name: 'Output Directory' })).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   const focusReturned = await exportButton.evaluate((element) => document.activeElement === element)
@@ -107,7 +107,7 @@ test('V02 and V18 preserve forward and reverse focus boundaries', async ({ page 
   await exportButton.focus()
   await exportButton.press('Enter')
   const exportDialog = page.getByRole('dialog', { name: 'Export Episodes' })
-  await expect(exportDialog.getByPlaceholder('/path/to/exports')).toBeFocused()
+  await expect(exportDialog.getByRole('textbox', { name: 'Output Directory' })).toBeFocused()
 
   const dialogStops = exportDialog.locator(
     'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',

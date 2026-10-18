@@ -106,7 +106,7 @@ test('J04 completes a representative local Viewer process', async ({ page }, tes
   await exportButton.focus()
   await exportButton.press('Enter')
   const dialog = page.getByRole('dialog', { name: 'Export Episodes' })
-  await dialog.getByPlaceholder('/path/to/exports').fill('/synthetic/export')
+  await dialog.getByRole('textbox', { name: 'Output Directory' }).fill('synthetic-export')
   await dialog.getByRole('button', { name: 'Start Export' }).press('Enter')
   await expect(dialog.getByRole('status')).toContainText('Export Complete')
   transitions.push('V18 export completed')

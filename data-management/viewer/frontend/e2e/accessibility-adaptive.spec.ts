@@ -241,7 +241,7 @@ test('V02 V03 V05 and V19 primary focus stops stay visible and unobscured', asyn
   await exportTrigger.press('Enter')
   const exportDialog = page.getByRole('dialog', { name: 'Export Episodes' })
   const exportStops = [
-    exportDialog.getByPlaceholder('/path/to/exports'),
+    exportDialog.getByRole('textbox', { name: 'Output Directory' }),
     exportDialog.getByRole('checkbox', { name: 'Apply crop, resize, and frame removal' }),
     exportDialog.getByRole('checkbox', { name: 'Include subtask metadata' }),
     exportDialog.getByRole('button', { name: 'Cancel' }),
