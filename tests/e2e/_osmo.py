@@ -92,9 +92,11 @@ class SubmitPlatform(Protocol):
     """The platform members the submit helpers read; ``tests.e2e._platform`` implements them for each profile."""
 
     @property
-    def profile(self) -> PlatformProfile: ...
+    def profile(self) -> PlatformProfile:
+        raise NotImplementedError
 
-    def workspace_args(self) -> list[str]: ...
+    def workspace_args(self) -> list[str]:
+        raise NotImplementedError
 
 
 def _run_osmo_read_command(
