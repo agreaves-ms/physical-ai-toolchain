@@ -28,7 +28,7 @@ from tests.e2e._osmo import (
     monitor_osmo_workflow,
     submit_osmo_dataset_training,
 )
-from tests.e2e._platform import PlatformProfile
+from tests.e2e._profile import PlatformProfile
 
 _ISAAC_TASK_NAME = "isaac-training"
 

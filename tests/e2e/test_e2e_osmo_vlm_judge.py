@@ -32,7 +32,7 @@ from tests.e2e._judge import (
 )
 from tests.e2e._lerobot_dataset import data_root_dataset_source
 from tests.e2e._osmo import assert_workflow_task_succeeded, monitor_osmo_workflow
-from tests.e2e._platform import LOCAL_PROFILE, PlatformProfile, profile_selected
+from tests.e2e._profile import LOCAL_PROFILE, PlatformProfile, profile_selected
 
 _DATASET = "so101-learner"
 _DATASET_VARIABLE = "E2E_JUDGE_DATASET"

@@ -23,15 +23,17 @@ from tests.e2e._lerobot_dataset import data_root_dataset_source
 from tests.e2e._lerobot_lifecycle import LeRobotScenario
 from tests.e2e._mlflow import LeRobotEvalResult, assert_evaluation_schema
 from tests.e2e._platform import (
-    AZURE_PROFILE,
-    LOCAL_PROFILE,
     AzurePlatform,
     LocalPlatform,
+    common_default,
+    parse_carrier_reference,
+)
+from tests.e2e._profile import (
+    AZURE_PROFILE,
+    LOCAL_PROFILE,
     PlatformProfile,
     PlatformProfileError,
-    common_default,
     osmo_login_url,
-    parse_carrier_reference,
     parse_profile,
     profile_selected,
     resolve_platform_profile,

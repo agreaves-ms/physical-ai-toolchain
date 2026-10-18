@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pytest
 
@@ -33,7 +33,7 @@ from tests.e2e._common import (
 
 if TYPE_CHECKING:
     from tests.e2e._lerobot_dataset import LeRobotDatasetSource
-    from tests.e2e._platform import E2EPlatform, PlatformProfile
+    from tests.e2e._profile import PlatformProfile
 
 OSMO_SUCCESS_STATES = {"COMPLETED", "SUCCEEDED"}
 OSMO_STARTED_STATES = {"RUNNING", *OSMO_SUCCESS_STATES}
@@ -86,6 +86,15 @@ class OSMOWorkflow:
     handle: E2EHandle = field(default_factory=E2EHandle)
     is_terminal: bool = False
     terminal_status: str | None = None
+
+
+class SubmitPlatform(Protocol):
+    """The platform members the submit helpers read; ``tests.e2e._platform`` implements them for each profile."""
+
+    @property
+    def profile(self) -> PlatformProfile: ...
+
+    def workspace_args(self) -> list[str]: ...
 
 
 def _run_osmo_read_command(
@@ -952,7 +961,7 @@ def _osmo_workflow_from_submission(
 
 def submit_osmo_lerobot_training(
     repo_root: Path,
-    platform: E2EPlatform,
+    platform: SubmitPlatform,
     *,
     dataset: LeRobotDatasetSource,
     policy_type: str,
@@ -1070,7 +1079,7 @@ def resolve_osmo_lerobot_eval_policy_override(
 
 def submit_osmo_lerobot_eval(
     repo_root: Path,
-    platform: E2EPlatform,
+    platform: SubmitPlatform,
     *,
     policy_source: OsmoLeRobotEvalPolicySource,
     dataset: LeRobotDatasetSource,
@@ -1135,7 +1144,7 @@ def resolve_osmo_isaac_eval_checkpoint_override() -> str | None:
 
 def submit_osmo_isaaclab_eval(
     repo_root: Path,
-    platform: E2EPlatform,
+    platform: SubmitPlatform,
     *,
     task: str,
     num_envs: int,

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from tests.e2e._common import format_command_failure, log_e2e, run_command
 from tests.e2e._osmo import OSMOWorkflow, _osmo_workflow_from_submission
-from tests.e2e._platform import PlatformProfile
+from tests.e2e._profile import PlatformProfile
 
 JUDGE_TASK_NAME = "vlm-judge"
 JUDGMENTS_FILE = "judgments.jsonl"

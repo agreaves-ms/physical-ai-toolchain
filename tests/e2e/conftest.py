@@ -26,14 +26,16 @@ from tests.e2e._environment import (
     read_local_env,
 )
 from tests.e2e._platform import (
-    LOCAL_PROFILE,
-    PROFILE_VARIABLE,
     AzurePlatform,
     E2EPlatform,
     LocalPlatform,
+    mlflow_server_reachable,
+)
+from tests.e2e._profile import (
+    LOCAL_PROFILE,
+    PROFILE_VARIABLE,
     PlatformProfile,
     PlatformProfileError,
-    mlflow_server_reachable,
     osmo_login_url,
     profile_selected,
     resolve_platform_profile,

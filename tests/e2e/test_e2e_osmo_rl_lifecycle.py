@@ -51,7 +51,8 @@ from tests.e2e._osmo import (
     submit_osmo_isaaclab_eval,
     submit_osmo_training,
 )
-from tests.e2e._platform import AZURE_PROFILE, LOCAL_PROFILE, E2EPlatform, LocalPlatform, common_default
+from tests.e2e._platform import E2EPlatform, LocalPlatform, common_default
+from tests.e2e._profile import AZURE_PROFILE, LOCAL_PROFILE
 
 _ISAAC_TRAINING_TASK_NAME = "isaac-training"
 _ISAAC_INFERENCE_TASK_NAME = "isaac-inference"

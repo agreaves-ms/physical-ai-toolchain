@@ -30,7 +30,8 @@ from tests.e2e._osmo import (
     _LEROBOT_EVAL_POLICY_REVISION_ENV,
     resolve_osmo_lerobot_eval_policy_override,
 )
-from tests.e2e._platform import AZURE_PROFILE, LOCAL_PROFILE, E2EPlatform
+from tests.e2e._platform import E2EPlatform
+from tests.e2e._profile import AZURE_PROFILE, LOCAL_PROFILE
 
 # The azure scenario smoke-tests the pipeline on a spot A100 with a few steps on synthetic data. The local
 # scenario trains long enough to beat the untrained baseline and evaluates the carrier image as well.

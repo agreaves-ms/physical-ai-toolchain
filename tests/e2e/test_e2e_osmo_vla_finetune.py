@@ -47,7 +47,8 @@ from tests.e2e._osmo import (
     wait_until_osmo_completed,
     wait_until_osmo_started,
 )
-from tests.e2e._platform import LOCAL_PROFILE, E2EPlatform, profile_selected
+from tests.e2e._platform import E2EPlatform
+from tests.e2e._profile import LOCAL_PROFILE, profile_selected
 
 _VLA_TASK_NAME = "train"
 
