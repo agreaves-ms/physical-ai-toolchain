@@ -185,7 +185,7 @@ def _bootstrap_azure_ml(*, experiment_name: str, policy_type: str, job_name: str
 
         print(f"[ERROR] Failed to configure Azure ML: {exc}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(1) from exc
 
 
 def authenticate_huggingface() -> str | None:
