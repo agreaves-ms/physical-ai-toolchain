@@ -7,6 +7,7 @@ import os
 import random
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -505,6 +506,37 @@ def _camera_keys(features: dict) -> list[str]:
     return keys or ["observation.images.color"]
 
 
+def _decode_video(video_file: str) -> list[np.ndarray]:
+    """Decode every frame of a video file as an RGB array."""
+    import av
+
+    with av.open(video_file) as container:
+        return [frame.to_ndarray(format="rgb24") for frame in container.decode(container.streams.video[0])]
+
+
+def _load_episode_frames(
+    dataset_dir: str,
+    camera_keys: list[str],
+    ep: int,
+    episode_record: dict | None,
+    fps: int | float,
+    decode_video: Callable[[str], list[np.ndarray]] = _decode_video,
+) -> dict[str, list[np.ndarray]] | None:
+    """Return each camera's frames for one episode, or None when any camera has no video or no frames in it."""
+    frames_by_key: dict[str, list[np.ndarray]] = {}
+    for camera_key in camera_keys:
+        video_file = _find_video_file(dataset_dir, camera_key, ep, episode_record)
+        if not video_file:
+            print(f"  [WARNING] No video for episode {ep} ({camera_key}), skipping")
+            return None
+        frames = _slice_episode_frames(decode_video(video_file), episode_record, camera_key, fps)
+        if not frames:
+            print(f"  [WARNING] No video frames for episode {ep} ({camera_key}), skipping")
+            return None
+        frames_by_key[camera_key] = frames
+    return frames_by_key
+
+
 def _replay_observation(state: np.ndarray, frames_by_key: dict[str, list[np.ndarray]], step: int) -> dict:
     """Build the policy input for one replayed frame: the joint state and every camera, under the dataset's keys."""
     obs = {"observation.state": torch.from_numpy(state).float()}
@@ -526,7 +558,6 @@ def _parse_rename_map(raw: str) -> dict[str, str] | None:
 def main() -> int:
     global JOINT_NAMES
 
-    import av
     import pyarrow.parquet as pq
 
     policy_repo_id = os.environ.get("POLICY_REPO_ID", "").strip()
@@ -649,20 +680,8 @@ def main() -> int:
             continue
         n_frames = len(data["timestamp"])
 
-        # Load every camera's frames for the episode
-        frames_by_key: dict[str, list[np.ndarray]] = {}
-        for camera_key in camera_keys:
-            video_file = _find_video_file(dataset_dir, camera_key, ep, episode_record)
-            if not video_file:
-                print(f"  [WARNING] No video for episode {ep} ({camera_key}), skipping")
-                break
-            container = av.open(video_file)
-            stream = container.streams.video[0]
-            frames = [av_frame.to_ndarray(format="rgb24") for av_frame in container.decode(stream)]
-            container.close()
-            frames_by_key[camera_key] = _slice_episode_frames(frames, episode_record, camera_key, fps)
-        if len(frames_by_key) < len(camera_keys) or not all(frames_by_key.values()):
-            print(f"  [WARNING] No video frames for episode {ep}, skipping")
+        frames_by_key = _load_episode_frames(dataset_dir, camera_keys, ep, episode_record, fps)
+        if frames_by_key is None:
             continue
 
         policy.reset()

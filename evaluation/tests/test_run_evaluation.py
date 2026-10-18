@@ -172,6 +172,83 @@ def test_replay_observation_carries_the_state_and_every_camera() -> None:
     assert obs["observation.state"].tolist() == list(range(7))
 
 
+def _two_camera_episode(tmp_path: Path, *, with_tool_video: bool = True) -> dict:
+    """Lay out an episode's scene and tool videos the way a LeRobot v3 dataset shares them, and return its record."""
+    record: dict = {}
+    for camera, chunk in (("observation.images.scene", 1), ("observation.images.tool", 2)):
+        record |= {
+            f"videos/{camera}/chunk_index": chunk,
+            f"videos/{camera}/file_index": 0,
+            f"videos/{camera}/from_timestamp": 0.1,
+            f"videos/{camera}/to_timestamp": 0.3,
+        }
+        if camera == "observation.images.scene" or with_tool_video:
+            video = tmp_path / "videos" / camera / f"chunk-{chunk:03d}" / "file-000.mp4"
+            video.parent.mkdir(parents=True)
+            video.touch()
+    return record
+
+
+def _decoded_by_chunk(video_file: str) -> list[np.ndarray]:
+    """Stand in for the decoder: six frames whose value is the chunk index, then the frame index."""
+    chunk = int(Path(video_file).parent.name.removeprefix("chunk-"))
+    return [np.full((1, 1, 3), chunk * 10 + index, dtype=np.uint8) for index in range(6)]
+
+
+def test_load_episode_frames_slices_every_camera_to_the_episode(tmp_path: Path) -> None:
+    record = _two_camera_episode(tmp_path)
+    cameras = ["observation.images.scene", "observation.images.tool"]
+
+    frames = _MOD._load_episode_frames(str(tmp_path), cameras, 3, record, 10, _decoded_by_chunk)
+
+    assert frames is not None
+    assert {camera: [int(frame[0, 0, 0]) for frame in frames[camera]] for camera in cameras} == {
+        "observation.images.scene": [11, 12],
+        "observation.images.tool": [21, 22],
+    }
+
+
+def test_load_episode_frames_skips_an_episode_missing_a_camera_video(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = _two_camera_episode(tmp_path, with_tool_video=False)
+    cameras = ["observation.images.scene", "observation.images.tool"]
+
+    assert _MOD._load_episode_frames(str(tmp_path), cameras, 3, record, 10, _decoded_by_chunk) is None
+    assert "No video for episode 3 (observation.images.tool)" in capsys.readouterr().out
+
+
+def test_load_episode_frames_skips_an_episode_outside_its_shared_video(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = _two_camera_episode(tmp_path) | {
+        "videos/observation.images.tool/from_timestamp": 1.0,
+        "videos/observation.images.tool/to_timestamp": 1.2,
+    }
+    cameras = ["observation.images.scene", "observation.images.tool"]
+
+    assert _MOD._load_episode_frames(str(tmp_path), cameras, 3, record, 10, _decoded_by_chunk) is None
+    assert "No video frames for episode 3 (observation.images.tool)" in capsys.readouterr().out
+
+
+def test_decode_video_returns_rgb_frames(tmp_path: Path) -> None:
+    av = pytest.importorskip("av")
+    video_file = tmp_path / "camera.mp4"
+    with av.open(str(video_file), mode="w") as container:
+        stream = container.add_stream("mpeg4", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 16, 16, "yuv420p"
+        for value in (0, 128, 255):
+            frame = av.VideoFrame.from_ndarray(np.full((16, 16, 3), value, dtype=np.uint8), format="rgb24")
+            container.mux(stream.encode(frame))
+        container.mux(stream.encode())
+
+    frames = _MOD._decode_video(str(video_file))
+
+    assert len(frames) == 3
+    assert all(frame.shape == (16, 16, 3) and frame.dtype == np.uint8 for frame in frames)
+    assert int(frames[0].mean()) < int(frames[-1].mean())
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
