@@ -1101,6 +1101,7 @@ rdbms
 rdma
 reactjs
 readall
+readback
 readonly
 realtime
 rearchitect
@@ -1566,6 +1567,7 @@ wwwroot
 xamarin
 xbox
 xcode
+xffprivate
 xhigh
 xlat
 xlong
