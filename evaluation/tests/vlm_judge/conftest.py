@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Collection
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import av
 import numpy as np
 import pytest
-from vlm_judge.judge import JudgeResult
+
+if TYPE_CHECKING:
+    from vlm_judge.judge import JudgeResult
 
 
 @pytest.fixture
@@ -73,6 +76,10 @@ class StubJudgeService:
         self.calls = 0
 
     def judge_episode(self, *, episode_id: str, instruction: str, **_kwargs: object) -> JudgeResult:
+        # Imported here because the dataviewer suite loads this conftest as a plugin, where only the
+        # evaluation.vlm_judge package path resolves.
+        from vlm_judge.judge import JudgeResult
+
         self.calls += 1
         if self.calls in self.fail_calls:
             raise RuntimeError("judge backend unavailable")
