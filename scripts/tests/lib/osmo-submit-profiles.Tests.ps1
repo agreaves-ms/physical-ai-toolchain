@@ -150,7 +150,7 @@ BeforeAll {
         $stubs = @{
             'terraform' = 'exit 1'
             'az'        = 'exit 1'
-            'osmo'      = 'case "$1 $2" in "data list") exit 1 ;; "workflow submit") echo "Workflow ID - test-workflow" ;; esac; exit 0'
+            'osmo'      = 'case "$1 $2" in "data list") exit 1 ;; "data upload") [[ -z "${OSMO_ARCHIVE_CAPTURE:-}" ]] || cp "$4" "$OSMO_ARCHIVE_CAPTURE" ;; "workflow submit") echo "Workflow ID - test-workflow" ;; esac; exit 0'
         }
         Invoke-BashEntryScript -ScriptPath (Join-Path $script:RepoRoot $ScriptPath) -WorkDir $workDir `
             -EnvVars $envVars -Stubs $stubs -ScriptArgs $Arguments
@@ -356,6 +356,32 @@ Describe 'Evaluation policy sources at submission' -Tag 'Unit' -Skip:(-not $scri
 }
 
 Describe 'VLM judge inputs at submission' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
+    It 'Stages the judge project and every path dependency its lock installs' -Skip:(-not $script:ArchiveToolsPresent) {
+        $capture = Join-Path $script:ArtifactsRoot ('judge-payload-' + [guid]::NewGuid().ToString('N') + '.zip')
+        $result = Invoke-SubmitWithStubbedOsmo -ScriptPath 'evaluation/vlm_judge/scripts/submit-osmo-judge.sh' `
+            -Arguments @('--profile', 'local', '--local-dataset', 'so101/pick') -ExtraEnv @{ OSMO_ARCHIVE_CAPTURE = $capture }
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($capture)
+        try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName })
+        }
+        finally {
+            $archive.Dispose()
+        }
+        $names | Should -Contain 'evaluation/vlm_judge/uv.lock'
+        $project = Join-Path $script:RepoRoot 'evaluation/vlm_judge'
+        $sources = @([regex]::Matches((Get-Content -Path (Join-Path $project 'pyproject.toml') -Raw), 'path\s*=\s*"([^"]+)"') |
+            ForEach-Object { $_.Groups[1].Value })
+        $sources.Count | Should -BeGreaterThan 0
+        foreach ($source in $sources) {
+            $relative = [System.IO.Path]::GetRelativePath($script:RepoRoot,
+                [System.IO.Path]::GetFullPath((Join-Path $project $source))).Replace('\', '/')
+            $names | Should -Contain "$relative/pyproject.toml" -Because "the judge lock installs $relative from its path"
+        }
+    }
+
     It 'Sends the instruction base64-encoded, so quotes, backslashes, and a leading dash reach the workflow' -Skip:(-not $script:ArchiveToolsPresent) {
         $instruction = '-place the "red" cube \ in the bin'
         $result = Invoke-SubmitWithStubbedOsmo -ScriptPath 'evaluation/vlm_judge/scripts/submit-osmo-judge.sh' -Arguments @(

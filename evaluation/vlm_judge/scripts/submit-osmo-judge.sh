@@ -209,7 +209,9 @@ entry_script_b64="$(base64 < "$entry_script" | tr -d '\n')"
 instruction_b64="$(printf '%s' "$instruction" | base64 | tr -d '\n')"
 
 info "Packaging and uploading the judge payload..."
-code_url=$(stage_and_upload_code "$REPO_ROOT" "$PROFILE_OSMO_CODE_STORAGE_URL" evaluation/vlm_judge) \
+# The judge's lock installs data-management/dataset-io from its relative path, so the payload carries it too.
+code_url=$(stage_and_upload_code "$REPO_ROOT" "$PROFILE_OSMO_CODE_STORAGE_URL" \
+  evaluation/vlm_judge data-management/dataset-io) \
   || fatal "Failed to stage and upload the judge payload"
 
 submit_args=(
