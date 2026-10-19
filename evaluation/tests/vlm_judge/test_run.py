@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -44,3 +45,37 @@ def test_given_inference_only_command_when_scoring_then_needs_no_curation(
     with pytest.raises(SystemExit) as error:
         inference.main([*_arguments(jsonl_dataset), "--operation", "list"])
     assert error.value.code == 2
+
+
+def test_given_an_episode_that_cannot_be_judged_when_scoring_then_fails_and_keeps_judged_verdicts(
+    jsonl_dataset: Path, monkeypatch: pytest.MonkeyPatch, judge_service_stub: Callable[..., object]
+) -> None:
+    # Arrange
+    from vlm_judge import run as inference
+
+    monkeypatch.setattr(inference, "build_service", lambda _args: judge_service_stub(fail_calls={2}))
+
+    # Act
+    result = inference.main([*_arguments(jsonl_dataset), "--indices", "0,1"])
+
+    # Assert
+    rows = (jsonl_dataset / "results.jsonl").read_text().splitlines()
+    assert result == 1
+    assert len(rows) == 1
+
+
+def test_given_a_complete_batch_with_a_failed_outcome_when_scoring_then_succeeds(
+    jsonl_dataset: Path, monkeypatch: pytest.MonkeyPatch, judge_service_stub: Callable[..., object]
+) -> None:
+    # Arrange
+    from vlm_judge import run as inference
+
+    monkeypatch.setattr(inference, "build_service", lambda _args: judge_service_stub(outcome=False))
+
+    # Act
+    result = inference.main([*_arguments(jsonl_dataset), "--indices", "0,1"])
+
+    # Assert
+    rows = [json.loads(line) for line in (jsonl_dataset / "results.jsonl").read_text().splitlines()]
+    assert result == 0
+    assert [row["outcome_success"] for row in rows] == [False, False]

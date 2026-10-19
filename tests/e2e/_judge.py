@@ -2,7 +2,8 @@
 
 The judge writes ``judgments.jsonl`` to its task output, which ``--output-dataset`` publishes as an
 OSMO dataset version; the tests download that dataset and check every verdict against the judge's
-output schema: a boolean outcome, a finite confidence, and per-frame progress.
+output schema: an outcome (true, false, or null for an inconclusive tie), a finite confidence, and
+per-frame progress.
 """
 
 from __future__ import annotations
@@ -26,13 +27,16 @@ DATASET_BUCKET = "training"
 @dataclass(frozen=True)
 class JudgeVerdict:
     episode_id: str
-    success: bool
+    success: bool | None
     confidence: float
     progress: tuple[float, ...]
 
 
 def parse_judgments(text: str) -> list[JudgeVerdict]:
-    """Parse ``judgments.jsonl``, asserting every record carries an outcome, a confidence, and progress."""
+    """Parse ``judgments.jsonl``, asserting every record carries an outcome, a confidence, and progress.
+
+    A ``null`` outcome is an inconclusive verdict, where the judge's outcome votes tie.
+    """
     verdicts = []
     for number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
@@ -41,8 +45,8 @@ def parse_judgments(text: str) -> list[JudgeVerdict]:
         success = record.get("outcome_success")
         confidence = record.get("outcome_confidence")
         progress = record.get("progress_per_frame")
-        if not isinstance(success, bool):
-            raise AssertionError(f"Verdict {number} has no boolean outcome_success: {record}")
+        if "outcome_success" not in record or not (success is None or isinstance(success, bool)):
+            raise AssertionError(f"Verdict {number} has no boolean or inconclusive outcome_success: {record}")
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not math.isfinite(confidence):
             raise AssertionError(f"Verdict {number} has no finite outcome_confidence: {record}")
         if (

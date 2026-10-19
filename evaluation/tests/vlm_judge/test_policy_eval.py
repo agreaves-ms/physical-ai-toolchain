@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -150,3 +151,51 @@ def test_given_sidecar_instruction_when_running_then_scores_without_default(
     row = json.loads((tmp_path / "results/judgments.jsonl").read_text())
     assert result == 0
     assert row["instruction"] == "Place the block"
+
+
+def test_given_require_all_when_a_rollout_fails_then_returns_failure_and_keeps_judged_verdicts(
+    rollout_video: Path, tmp_path: Path
+) -> None:
+    # Arrange
+    (tmp_path / "000-corrupt.mp4").write_bytes(b"not an MP4")
+
+    # Act
+    result = policy_eval.main([*_arguments(tmp_path), "--require-all"])
+
+    # Assert
+    rows = [json.loads(line) for line in (tmp_path / "results/judgments.jsonl").read_text().splitlines()]
+    assert result == 1
+    assert [row["episode_id"] for row in rows] == ["rollout"]
+
+
+def test_given_require_all_when_limit_leaves_out_a_failing_rollout_then_succeeds(
+    rollout_video: Path, tmp_path: Path
+) -> None:
+    # Arrange
+    (tmp_path / "zz-corrupt.mp4").write_bytes(b"not an MP4")
+
+    # Act
+    result = policy_eval.main([*_arguments(tmp_path), "--require-all", "--limit", "1"])
+
+    # Assert
+    rows = [json.loads(line) for line in (tmp_path / "results/judgments.jsonl").read_text().splitlines()]
+    assert result == 0
+    assert [row["episode_id"] for row in rows] == ["rollout"]
+
+
+def test_given_require_all_when_complete_batch_has_a_failed_outcome_then_succeeds(
+    rollout_video: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    judge_service_stub: Callable[..., object],
+) -> None:
+    # Arrange
+    monkeypatch.setattr(policy_eval, "_build_service", lambda _args: judge_service_stub(outcome=False))
+
+    # Act
+    result = policy_eval.main([*_arguments(tmp_path), "--require-all"])
+
+    # Assert
+    row = json.loads((tmp_path / "results/judgments.jsonl").read_text())
+    assert result == 0
+    assert row["outcome_success"] is False

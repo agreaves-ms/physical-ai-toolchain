@@ -73,42 +73,64 @@ judge_args=(
 [[ -n "${JUDGE_BASE_URL:-}" ]] && judge_args+=(--base-url "${JUDGE_BASE_URL}")
 [[ -n "${JUDGE_LIMIT:-}" ]] && judge_args+=(--limit "${JUDGE_LIMIT}")
 
+judge_status=0
 if [[ "${input_kind}" == "lerobot" ]]; then
   echo "Judging LeRobot episodes in ${JUDGE_INPUT_DIR}"
   # The attached form keeps argparse from reading an instruction that starts with "-" as another option.
   [[ -n "${JUDGE_INSTRUCTION:-}" ]] && judge_args+=("--instruction=${JUDGE_INSTRUCTION}")
   [[ -n "${JUDGE_INDICES:-}" ]] && judge_args+=(--indices "${JUDGE_INDICES}")
-  python -m evaluation.vlm_judge.run --dataset "${JUDGE_INPUT_DIR}" "${judge_args[@]}"
+  python -m evaluation.vlm_judge.run --dataset "${JUDGE_INPUT_DIR}" "${judge_args[@]}" || judge_status=$?
 else
   echo "Judging rollout videos under ${JUDGE_INPUT_DIR}"
+  # --require-all fails the batch when any selected rollout could not be judged, as the dataset judge does.
   python -m evaluation.vlm_judge.policy_eval --rollout-root "${JUDGE_INPUT_DIR}" \
-    "--instruction=${JUDGE_INSTRUCTION}" "${judge_args[@]}"
+    "--instruction=${JUDGE_INSTRUCTION}" "${judge_args[@]}" --require-all || judge_status=$?
 fi
 
-# Every verdict must carry an outcome, a confidence, and per-frame progress.
-python - "${JUDGMENTS}" << 'CHECK_VERDICTS'
+# Every verdict must carry an outcome (true, false, or null for an inconclusive tie), a confidence, and per-frame
+# progress. The check also runs after a judge failure, so the log reports whatever verdicts were written.
+check_status=0
+python - "${JUDGMENTS}" << 'CHECK_VERDICTS' || check_status=$?
 import json
 import math
 import sys
+from pathlib import Path
 
-records = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+records = [json.loads(line) for line in lines if line.strip()]
 if not records:
     sys.exit("ERROR: the judge wrote no verdicts")
 for record in records:
+    outcome = record.get("outcome_success")
     confidence = record.get("outcome_confidence")
     progress = record.get("progress_per_frame")
     if (
-        not isinstance(record.get("outcome_success"), bool)
+        "outcome_success" not in record
+        or not (outcome is None or isinstance(outcome, bool))
         or not isinstance(confidence, (int, float))
         or not math.isfinite(confidence)
         or not isinstance(progress, list)
         or not progress
     ):
         sys.exit(f"ERROR: incomplete verdict for {record.get('episode_id')}: {record}")
-successes = sum(record["outcome_success"] for record in records)
+successes = sum(record["outcome_success"] is True for record in records)
+inconclusive = sum(record["outcome_success"] is None for record in records)
 mean_confidence = sum(record["outcome_confidence"] for record in records) / len(records)
-print(f"JUDGE_RESULT=episodes={len(records)} successes={successes} mean_confidence={mean_confidence:.3f}")
+print(
+    f"JUDGE_RESULT=episodes={len(records)} successes={successes} mean_confidence={mean_confidence:.3f} "
+    f"inconclusive={inconclusive}"
+)
 for record in records:
-    print(f"  {record['episode_id']}: success={record['outcome_success']} confidence={record['outcome_confidence']:.3f}")
+    outcome = "inconclusive" if record["outcome_success"] is None else record["outcome_success"]
+    print(f"  {record['episode_id']}: success={outcome} confidence={record['outcome_confidence']:.3f}")
 CHECK_VERDICTS
+
+# A failed batch keeps its verdicts for diagnosis under a name no consumer reads as a complete batch.
+if (( judge_status != 0 )); then
+  [[ -f "${JUDGMENTS}" ]] && mv "${JUDGMENTS}" "${OUTPUT_DIR}/judgments.partial.jsonl"
+  echo "ERROR: the judge could not judge every selected input (exit ${judge_status}); verdicts it wrote are in judgments.partial.jsonl" >&2
+  exit 1
+fi
+(( check_status == 0 )) || exit "${check_status}"
 echo "=== VLM Judge Complete: ${JUDGMENTS} ==="

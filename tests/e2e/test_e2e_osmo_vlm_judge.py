@@ -88,6 +88,26 @@ def test_parse_judgments_rejects_an_empty_file() -> None:
         parse_judgments("\n")
 
 
+def test_parse_judgments_reads_an_inconclusive_verdict() -> None:
+    record = {
+        "episode_id": "pick/episode_000002",
+        "outcome_success": None,
+        "outcome_confidence": 0.5,
+        "progress_per_frame": [0.3, 0.6],
+    }
+
+    verdicts = parse_judgments(json.dumps(record))
+
+    assert verdicts == [JudgeVerdict("pick/episode_000002", None, 0.5, (0.3, 0.6))]
+
+
+def test_parse_judgments_rejects_a_verdict_without_an_outcome() -> None:
+    record = {"episode_id": "pick/episode_000003", "outcome_confidence": 0.9, "progress_per_frame": [1.0]}
+
+    with pytest.raises(AssertionError, match="outcome_success"):
+        parse_judgments(json.dumps(record))
+
+
 @pytest.mark.e2e
 @pytest.mark.skipif(
     not profile_selected(LOCAL_PROFILE),

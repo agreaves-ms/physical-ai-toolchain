@@ -34,7 +34,8 @@ while [[ $# -gt 0 ]]; do
   [[ "$1" == "--output" ]] && output="$2"
   shift
 done
-printf '%s\n' "$FAKE_VERDICT" > "$output"
+[[ -n "${FAKE_VERDICT:-}" ]] && printf '%s\n' "$FAKE_VERDICT" > "$output"
+exit "${FAKE_JUDGE_EXIT:-0}"
 '@
     }
 
@@ -145,5 +146,71 @@ Describe 'osmo-judge-entry.sh' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
 
         $result.ExitCode | Should -Not -Be 0
         $result.StdErr | Should -Match 'incomplete verdict for ds/episode_000000'
+    }
+
+    It 'fails when an outcome is not true, false, or null' {
+        $result = Invoke-JudgeEntry -LeRobotInput -EnvVars @{
+            FAKE_VERDICT = '{"episode_id": "ds/episode_000000", "outcome_success": "yes", "outcome_confidence": 0.9, "progress_per_frame": [0, 100]}'
+        }
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdErr | Should -Match 'incomplete verdict for ds/episode_000000'
+    }
+
+    It 'accepts an inconclusive verdict and counts it' {
+        $result = Invoke-JudgeEntry -LeRobotInput -EnvVars @{
+            FAKE_VERDICT = @(
+                '{"episode_id": "ds/episode_000000", "outcome_success": null, "outcome_confidence": 0.5, "progress_per_frame": [0, 40]}'
+                '{"episode_id": "ds/episode_000001", "outcome_success": true, "outcome_confidence": 0.9, "progress_per_frame": [0, 100]}'
+            ) -join "`n"
+        }
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        $result.StdOut | Should -Match 'JUDGE_RESULT=episodes=2 successes=1 mean_confidence=0\.700 inconclusive=1'
+        $result.StdOut | Should -Match 'ds/episode_000000: success=inconclusive confidence=0\.500'
+    }
+
+    It 'succeeds for a complete batch whose verdict is a failure' {
+        $result = Invoke-JudgeEntry -LeRobotInput -EnvVars @{
+            FAKE_VERDICT = '{"episode_id": "ds/episode_000000", "outcome_success": false, "outcome_confidence": 0.8, "progress_per_frame": [0, 20]}'
+        }
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        $result.StdOut | Should -Match 'JUDGE_RESULT=episodes=1 successes=0 mean_confidence=0\.800 inconclusive=0'
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeTrue
+    }
+
+    It 'requires the rollout judge to judge every selected rollout' {
+        $result = Invoke-JudgeEntry -EnvVars @{ JUDGE_BACKEND = 'echo'; JUDGE_INSTRUCTION_B64 = (ConvertTo-InstructionB64 'Keep the pole upright') }
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        ($result.Calls | Where-Object { $_ -match '^python -m evaluation\.vlm_judge\.policy_eval ' }) | Should -Match ' --require-all$'
+    }
+
+    It 'fails after reporting the verdicts a failed <Branch> judge wrote, and keeps them as a partial batch' -ForEach @(
+        @{ Branch = 'LeRobot'; LeRobotInput = $true }
+        @{ Branch = 'rollout'; LeRobotInput = $false }
+    ) {
+        $result = Invoke-JudgeEntry -LeRobotInput:$LeRobotInput -EnvVars @{
+            JUDGE_BACKEND         = 'echo'
+            JUDGE_INSTRUCTION_B64 = (ConvertTo-InstructionB64 'Keep the pole upright')
+            FAKE_JUDGE_EXIT       = '1'
+        }
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdOut | Should -Match 'JUDGE_RESULT=episodes=1 successes=1'
+        $result.StdErr | Should -Match 'could not judge every selected input \(exit 1\)'
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.partial.jsonl') | Should -BeTrue
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeFalse
+    }
+
+    It 'fails and reports no verdicts when the judge fails before writing any' {
+        $result = Invoke-JudgeEntry -LeRobotInput -EnvVars @{ FAKE_VERDICT = ''; FAKE_JUDGE_EXIT = '1' }
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdErr | Should -Match 'the judge wrote no verdicts'
+        $result.StdErr | Should -Match 'could not judge every selected input \(exit 1\)'
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeFalse
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.partial.jsonl') | Should -BeFalse
     }
 }

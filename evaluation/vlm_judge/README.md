@@ -1,7 +1,7 @@
 ---
 title: VLM-as-Judge
 description: Run vision-language evaluations with saved inputs, approval-gated jobs and confined HTTP media access
-ms.date: 2026-10-16
+ms.date: 2026-10-19
 ---
 
 Open-weight-first harness that scores LeRobot manipulation episodes and
@@ -381,6 +381,8 @@ Dataset writers must be trusted; file replacement races are not prevented.
 ## 📡 OSMO Workflow
 
 `scripts/submit-osmo-judge.sh` runs the judge as an OSMO workflow on one GPU. The task installs the judge's locked runtime, judges its input, checks that every verdict has an outcome, a confidence, and per-frame progress, and writes `judgments.jsonl` to the task output. `--output-dataset NAME` also publishes the verdicts as a version of an OSMO dataset.
+
+The task fails when the judge cannot judge every selected episode or video. It still checks and logs the verdicts it wrote, and keeps them as `judgments.partial.jsonl`, so a failed run never leaves a `judgments.jsonl` that looks complete. An inconclusive verdict, where the outcome votes tie, has a `null` outcome; it counts as a complete verdict, and the task log reports how many verdicts were inconclusive.
 
 The input decides what the judge scores. A LeRobot dataset brings its episodes and instructions. Any other directory is judged as rollout videos, which need `--instruction`.
 

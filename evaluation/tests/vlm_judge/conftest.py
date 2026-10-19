@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 import av
 import numpy as np
 import pytest
+from vlm_judge.judge import JudgeResult
 
 
 @pytest.fixture
@@ -60,3 +62,39 @@ def jsonl_dataset(tmp_path: Path, rollout_video: Path) -> Path:
     for index in (0, 1):
         (videos / f"episode_{index:06d}.mp4").write_bytes(rollout_video.read_bytes())
     return root
+
+
+class StubJudgeService:
+    """Judge service stand-in that returns ``outcome`` for every episode and raises on the chosen call numbers."""
+
+    def __init__(self, outcome: bool | None, fail_calls: Collection[int]) -> None:
+        self.outcome = outcome
+        self.fail_calls = set(fail_calls)
+        self.calls = 0
+
+    def judge_episode(self, *, episode_id: str, instruction: str, **_kwargs: object) -> JudgeResult:
+        self.calls += 1
+        if self.calls in self.fail_calls:
+            raise RuntimeError("judge backend unavailable")
+        return JudgeResult(
+            episode_id=episode_id,
+            instruction=instruction,
+            judge_model="stub",
+            prompt_version="test",
+            n_frames=2,
+            outcome_success=self.outcome,
+            outcome_confidence=0.75,
+            outcome_n_valid_votes=3,
+            progress_per_frame=[0, 100],
+            voc=1.0,
+        )
+
+
+@pytest.fixture
+def judge_service_stub() -> Callable[..., StubJudgeService]:
+    """Return a factory for a judge service that answers one outcome or raises on chosen calls (1-based)."""
+
+    def factory(outcome: bool | None = True, fail_calls: Collection[int] = ()) -> StubJudgeService:
+        return StubJudgeService(outcome, fail_calls)
+
+    return factory
