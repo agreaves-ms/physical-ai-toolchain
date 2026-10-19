@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
-from collections.abc import Sequence
+import socket
+import tempfile
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
 import lerobot_datasets as ld
 import pytest
+
+_CANARY = b"private-host-file-canary"
 
 
 def _make_dataset(
@@ -286,3 +292,229 @@ class TestImportListRemove:
         assert "so101-learner\tepisodes=1" in capsys.readouterr().out
         assert ld.main(["--datasets-dir", str(datasets_dir), "remove", "../x", "--yes"]) == 1
         assert "Invalid dataset name" in capsys.readouterr().err
+
+
+@pytest.fixture
+def private_dir(tmp_path: Path) -> Path:
+    """A host directory outside every source, holding a file that must never be published."""
+    path = tmp_path / "private"
+    path.mkdir()
+    (path / "canary.txt").write_bytes(_CANARY)
+    _write_json(path / "info.json", {"codebase_version": "v3.0", "total_episodes": 1, "features": {}})
+    return path
+
+
+@pytest.fixture
+def short_tmp() -> Iterator[Path]:
+    """A temporary directory with a short path, because macOS limits UNIX socket paths to about 104 bytes."""
+    path = Path(tempfile.mkdtemp(prefix="ld-", dir="/tmp"))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _assert_nothing_published(datasets_dir: Path, name: str) -> None:
+    assert not (datasets_dir / name).exists()
+    staging = datasets_dir.parent / ld.STAGING_DIR_NAME
+    assert not staging.exists() or not any(staging.iterdir())
+    published = [path for path in datasets_dir.rglob("*") if path.is_file() and not path.is_symlink()]
+    assert all(_CANARY not in path.read_bytes() for path in published)
+
+
+def _passing_source(root: Path, **kwargs: object) -> Path:
+    _make_dataset(root, **kwargs)
+    _write_json(root / ld.EXPORT_VALIDATION_FILE, {"status": "pass"})
+    return root
+
+
+def _add_file_link(source: Path, private_dir: Path) -> str:
+    (source / "data").mkdir()
+    (source / "data" / "leak.txt").symlink_to(private_dir / "canary.txt")
+    return "leak.txt"
+
+
+def _add_directory_link(source: Path, private_dir: Path) -> str:
+    (source / "videos").mkdir()
+    (source / "videos" / "leak").symlink_to(private_dir, target_is_directory=True)
+    return "leak"
+
+
+def _add_internal_link(source: Path, private_dir: Path) -> str:
+    (source / "meta" / "copy.json").symlink_to("info.json")
+    return "copy.json"
+
+
+def _add_metadata_link(source: Path, private_dir: Path) -> str:
+    (source / "meta" / "info.json").unlink()
+    (source / "meta" / "info.json").symlink_to(private_dir / "info.json")
+    return "info.json"
+
+
+def _add_fifo(source: Path, private_dir: Path) -> str:
+    os.mkfifo(source / "pipe")
+    return "pipe"
+
+
+class TestLinkRefusal:
+    @pytest.mark.parametrize(
+        "add_entry",
+        [_add_file_link, _add_directory_link, _add_internal_link, _add_metadata_link, _add_fifo],
+        ids=["file-link", "directory-link", "internal-link", "metadata-link", "fifo"],
+    )
+    def test_import_refuses_links_and_special_files(
+        self, datasets_dir: Path, tmp_path: Path, private_dir: Path, add_entry: Callable[[Path, Path], str]
+    ) -> None:
+        source = _make_dataset(tmp_path / "src")
+        entry = add_entry(source, private_dir)
+
+        with pytest.raises(ld.DatasetError, match=re.escape(entry)):
+            ld.import_dataset(datasets_dir, "leaky", source, log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_import_refuses_a_linked_lerobot_directory(
+        self, datasets_dir: Path, tmp_path: Path, private_dir: Path
+    ) -> None:
+        elsewhere = _make_dataset(tmp_path / "elsewhere")
+        (elsewhere / "secret.txt").write_bytes(_CANARY)
+        capture = tmp_path / "capture"
+        capture.mkdir()
+        (capture / "lerobot").symlink_to(elsewhere, target_is_directory=True)
+
+        with pytest.raises(ld.DatasetError, match="lerobot is a symbolic link"):
+            ld.import_dataset(datasets_dir, "leaky", capture, log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_import_refuses_a_socket(self, datasets_dir: Path, short_tmp: Path) -> None:
+        source = _make_dataset(short_tmp / "src")
+        server = socket.socket(socket.AF_UNIX)
+        try:
+            try:
+                server.bind(str(source / "sock"))
+            except OSError as error:
+                pytest.skip(f"Cannot bind a UNIX socket here: {error}")
+
+            with pytest.raises(ld.DatasetError, match="sock"):
+                ld.import_dataset(datasets_dir, "leaky", source, log=lambda _: None)
+        finally:
+            server.close()
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_import_refuses_an_entry_swapped_for_a_link_while_copying(
+        self, datasets_dir: Path, tmp_path: Path, private_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _make_dataset(tmp_path / "src")
+        frame = source / "data" / "frame.bin"
+        frame.parent.mkdir()
+        frame.write_bytes(b"frame")
+        list_names = ld._list_names
+
+        def swap_after_listing(directory_fd: int) -> list[str]:
+            names = list_names(directory_fd)
+            if "frame.bin" in names and not frame.is_symlink():
+                frame.unlink()
+                frame.symlink_to(private_dir / "canary.txt")
+            return names
+
+        monkeypatch.setattr(ld, "_list_names", swap_after_listing)
+
+        with pytest.raises(ld.DatasetError, match=re.escape("frame.bin is a symbolic link")):
+            ld.import_dataset(datasets_dir, "leaky", source, log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_import_follows_a_link_the_operator_names(self, datasets_dir: Path, tmp_path: Path) -> None:
+        source = _make_dataset(tmp_path / "src")
+        named = tmp_path / "named"
+        named.symlink_to(source, target_is_directory=True)
+
+        target = ld.import_dataset(datasets_dir, "named", named, log=lambda _: None)
+
+        assert ld.is_dataset(target)
+        assert not any((datasets_dir.parent / ld.STAGING_DIR_NAME).iterdir())
+
+    @pytest.mark.parametrize("drop", [[], ["observation.state"]], ids=["copy", "drop-feature"])
+    def test_derive_refuses_a_link_in_a_used_source(
+        self, datasets_dir: Path, tmp_path: Path, private_dir: Path, drop: list[str]
+    ) -> None:
+        source = _passing_source(tmp_path / "src")
+        _add_file_link(source, private_dir)
+        fake = _FakeEditDataset()
+
+        with pytest.raises(ld.DatasetError, match=re.escape("leak.txt is a symbolic link")):
+            ld.derive(datasets_dir, "leaky", [source], drop_features=drop, run=fake, log=lambda _: None)
+
+        assert fake.commands == []
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_derive_refuses_a_link_in_a_source_it_would_skip(
+        self, datasets_dir: Path, tmp_path: Path, private_dir: Path
+    ) -> None:
+        good = _passing_source(tmp_path / "src" / "good")
+        failing = _make_dataset(tmp_path / "src" / "failing")
+        _write_json(failing / ld.EXPORT_VALIDATION_FILE, {"status": "fail"})
+        _add_directory_link(failing, private_dir)
+
+        with pytest.raises(ld.DatasetError, match="leak is a symbolic link"):
+            ld.derive(datasets_dir, "leaky", [good, failing], run=_FakeEditDataset(), log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_derive_refuses_a_linked_capture_sidecar(self, datasets_dir: Path, tmp_path: Path) -> None:
+        capture = tmp_path / "capture"
+        _make_dataset(capture / "lerobot")
+        outside = tmp_path / "outside-ledger.json"
+        _write_json(outside, {"episodes": [{"index": 0, "status": "passed"}]})
+        (capture / ld.LEDGER_FILE).symlink_to(outside)
+
+        with pytest.raises(ld.DatasetError, match=re.escape("ledger.json is a symbolic link")):
+            ld.derive(datasets_dir, "leaky", [capture], run=_FakeEditDataset(), log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_derive_edits_and_selects_from_staged_copies(
+        self, datasets_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _passing_source(tmp_path / "src", features=("observation.state", "action", "observation.task_phase"))
+        fake = _FakeEditDataset()
+        staging = (datasets_dir.parent / ld.STAGING_DIR_NAME).resolve()
+        selected_roots: list[Path] = []
+        select_episodes = ld.select_episodes
+
+        def record_selection(selected: ld.SourceDataset, **kwargs: bool) -> ld.EpisodeSelection:
+            selected_roots.append(selected.root)
+            return select_episodes(selected, **kwargs)
+
+        monkeypatch.setattr(ld, "select_episodes", record_selection)
+
+        target = ld.derive(
+            datasets_dir, "learner", [source], drop_features=["observation.task_phase"], run=fake, log=lambda _: None
+        )
+
+        edited_root = Path(fake.commands[0][fake.commands[0].index("--root") + 1])
+        assert edited_root.is_relative_to(staging)
+        assert all(root.is_relative_to(staging) for root in selected_roots)
+        assert ld.is_dataset(target)
+        assert not any(staging.iterdir())
+
+    def test_derive_refuses_a_sidecar_that_is_not_a_regular_file(self, datasets_dir: Path, tmp_path: Path) -> None:
+        capture = tmp_path / "capture"
+        _make_dataset(capture / "lerobot")
+        os.mkfifo(capture / ld.EXPORT_VALIDATION_FILE)
+
+        with pytest.raises(ld.DatasetError, match=re.escape("export-validation.json is not a regular file")):
+            ld.derive(datasets_dir, "leaky", [capture], run=_FakeEditDataset(), log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    def test_import_refuses_a_source_that_loses_its_metadata_while_copying(
+        self, datasets_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _make_dataset(tmp_path / "src")
+        monkeypatch.setattr(ld, "copy_dataset_tree", lambda _source, target: target.mkdir())
+
+        with pytest.raises(ld.DatasetError, match=re.escape("lost meta/info.json while it was copied")):
+            ld.import_dataset(datasets_dir, "partial", source, log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "partial")

@@ -202,6 +202,7 @@ clickstream
 clickthrough
 Clis
 cloneable
+closefd
 cloudadmin
 cloudamize
 cloudera
@@ -474,6 +475,7 @@ fromarray
 frontend
 frontends
 frontmatter
+fspath
 fullstack
 fulltext
 fuser
@@ -854,6 +856,7 @@ nodejs
 nodesource
 nodistro
 nojekyll
+nonblock
 noncompliance
 noncompliant
 nosql

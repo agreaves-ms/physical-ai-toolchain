@@ -27,6 +27,8 @@ The tool manages a datasets directory that holds one complete LeRobot dataset pe
 
 A source with no sidecar is skipped unless you pass `--include-unvalidated`. Use `--drop-feature` to remove privileged simulation state, such as task phases or object poses, that a learner must not see.
 
+`import` and `derive` copy only regular files and directories. They refuse a source that holds a symbolic link, such as a linked `lerobot/` folder or metadata file, or a special file such as a FIFO, and nothing reaches the datasets directory. This keeps a dataset from pulling other files from the host into the folder every OSMO job reads. To use such a source, replace each link with the file it points to after checking that the file belongs to the dataset.
+
 #### Derive the UR10e learner dataset
 
 The local IL test trains on `ur10e-gear-to-bin-learner`, derived from the UR10e gear-to-bin v3 captures in a [physical-ai-toolchain-skills](https://github.com/microsoft/physical-ai-toolchain-skills) checkout. In that checkout, `<ur10e-captures>` is `workflows/isaac-sim/ur10e-gear-to-bin-v3/.isaac-sim/datasets/`, where each capture set holds a `lerobot/` dataset and the `ledger.json` that selects its passed episodes. Pass one `--source` per set and drop the simulation state the policy must not see:
@@ -44,7 +46,7 @@ infrastructure/local/datasets.sh derive ur10e-gear-to-bin-learner \
 
 The result keeps the robot state, the actions, and the scene and tool cameras. The SO-101 learner dataset for the SmolVLA and judge tests is derived the same way; see [Datasets](../../infrastructure/local/README.md#-datasets) in the local profile guide.
 
-`derive` runs `lerobot-edit-dataset` from the LeRobot release that training jobs install. It builds the dataset in a `.staging` folder beside the datasets directory and moves it into place only when it is complete, so readers never see a partial dataset.
+`derive` runs `lerobot-edit-dataset` from the LeRobot release that training jobs install. It copies each source into a `.staging` folder beside the datasets directory, selects episodes and features from that copy, and moves the result into place only when it is complete, so readers never see a partial dataset. It processes one source at a time, and dropping features needs room for one more copy of that source. `import` stages its copy the same way.
 
 `list`, `import`, and `remove` need only the Python standard library.
 

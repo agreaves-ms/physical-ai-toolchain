@@ -2,7 +2,7 @@
 title: Local OSMO Profile
 description: Standalone OSMO, platform services, MLflow, and the dataviewer on a single-node K3s workstation with local storage and images
 author: Microsoft Robotics-AI Team
-ms.date: 2026-10-16
+ms.date: 2026-10-19
 ms.topic: how-to
 keywords:
   - local-profile
@@ -193,7 +193,9 @@ infrastructure/local/datasets.sh derive so101-learner \
   --drop-feature observation.assistance
 ```
 
-The sources stay unchanged. Derivation runs `lerobot-edit-dataset` from the IL LeRobot lock, so its first run downloads that environment, and the new folder appears only after the merge completes. [Data Management Tools](../../data-management/tools/README.md) describes the selection rules and [the UR10e derivation](../../data-management/tools/README.md#derive-the-ur10e-learner-dataset) for the IL test.
+The sources stay unchanged. Derivation runs `lerobot-edit-dataset` from the IL LeRobot lock, so its first run downloads that environment, and the new folder appears only after the merge completes.
+
+`import` and `derive` refuse a source that holds a symbolic link or a special file, so a dataset cannot bring other host files into the directory every task reads. [Data Management Tools](../../data-management/tools/README.md) describes the selection rules and [the UR10e derivation](../../data-management/tools/README.md#derive-the-ur10e-learner-dataset) for the IL test.
 
 ## 📤 Submitting Jobs
 
