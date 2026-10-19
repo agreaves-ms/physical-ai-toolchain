@@ -208,6 +208,32 @@ describe_state() {
   esac
 }
 
+# Print present, drifted, unreadable, or missing for this cluster's ACR token. A token is present only when it
+# holds this registry's built-in pull-only scope map and is enabled; anything else is drifted, so --apply never
+# reissues a password for broader access. A token whose scope map or status cannot be read stops the plan and
+# --apply, and is unreadable for --remove, which deletes it either way.
+acr_token_state_of() {
+  local output
+  if ! output=$(az acr token show --name "$acr_token_name" --registry "$acr_name" --subscription "$subscription_id" \
+    --query '{scopeMapId: scopeMapId, status: status}' --output json 2>"$work_dir/token-show.err"); then
+    grep -Eqi 'ResourceNotFound|NotFound|404' "$work_dir/token-show.err" \
+      || fatal "Unable to read ACR token $acr_token_name on $acr_name"
+    echo missing
+    return 0
+  fi
+  if ! jq -e '[.scopeMapId, .status] | all(type == "string" and length > 0)' <<< "$output" >/dev/null 2>&1; then
+    [[ "$mode" == "remove" ]] || fatal "Unable to read the scope map and status of ACR token $acr_token_name on $acr_name"
+    echo unreadable
+    return 0
+  fi
+  if jq -e --arg scope_map "$(lowercase "$acr_id/scopeMaps/_repositories_pull")" \
+    '(.scopeMapId | ascii_downcase) == $scope_map and (.status | ascii_downcase) == "enabled"' <<< "$output" >/dev/null; then
+    echo present
+  else
+    echo drifted
+  fi
+}
+
 #------------------------------------------------------------------------------
 # Plan
 #------------------------------------------------------------------------------
@@ -252,20 +278,19 @@ fi
 
 acr_token_state=""
 if [[ -n "$acr_name" ]]; then
-  acr_login_server=$(az acr show --name "$acr_name" --subscription "$subscription_id" --query loginServer --output tsv)
-  if az acr token show --name "$acr_token_name" --registry "$acr_name" --subscription "$subscription_id" \
-    --output none 2>"$work_dir/token-show.err"; then
-    acr_token_state=present
-  elif grep -Eqi 'ResourceNotFound|NotFound|404' "$work_dir/token-show.err"; then
-    acr_token_state=missing
-  else
-    fatal "Unable to read ACR token $acr_token_name on $acr_name"
-  fi
+  acr_registry=$(az acr show --name "$acr_name" --subscription "$subscription_id" \
+    --query '{id: id, loginServer: loginServer}' --output json \
+    | jq -er '[.id, .loginServer] | if all(type == "string" and length > 0) then @tsv else error("incomplete registry") end')
+  IFS=$'\t' read -r acr_id acr_login_server <<< "$acr_registry"
+  acr_token_state=$(acr_token_state_of)
   case "$acr_token_state:$mode" in
-    present:apply)  print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: present; --apply issues a new password" ;;
-    missing:remove) print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: missing" ;;
-    missing:*)      print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: missing; --apply creates it (pull only)" ;;
-    *)              print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: present" ;;
+    present:apply)     print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: present; --apply issues a new password" ;;
+    drifted:remove)    print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: not pull-only or disabled; --remove deletes it" ;;
+    drifted:*)         print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: not pull-only or disabled; inspect it before applying" ;;
+    unreadable:remove) print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: scope map or status unreadable; --remove deletes it" ;;
+    missing:remove)    print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: missing" ;;
+    missing:*)         print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: missing; --apply creates it (pull only)" ;;
+    *)                 print_kv "ACR Pull Token" "$acr_token_name on $acr_login_server: present" ;;
   esac
   print_kv "OSMO Credential" "$osmo_registry_credential (REGISTRY) in the local OSMO"
 fi
@@ -293,6 +318,8 @@ if [[ "$mode" == "apply" ]]; then
   section "Apply"
   [[ "$workflow_state" != "mismatch" && "$dataviewer_state" != "mismatch" ]] \
     || fatal "A federated credential with this name has a different issuer, subject, or audience; nothing was changed"
+  [[ "$acr_token_state" != "drifted" ]] \
+    || fatal "ACR token $acr_token_name on $acr_name is not limited to pulls from this registry, or is disabled; nothing was changed. A password already stored in the local OSMO is unchanged and may still work: inspect the token, or run --remove to delete the token and the stored credential"
   [[ "$workflow_state" == "present" ]] \
     || create_federated_credential "$workflow_identity_name" "$workflow_resource_group" "$workflow_credential" "$workflow_subject"
   if [[ "$dataviewer_state" == "missing" ]]; then
@@ -330,7 +357,7 @@ elif [[ "$mode" == "remove" ]]; then
     delete_federated_credential "$dataviewer_identity_name" "$dataviewer_resource_group" "$dataviewer_credential"
   fi
   if [[ -n "$acr_name" ]]; then
-    if [[ "$acr_token_state" == "present" ]]; then
+    if [[ "$acr_token_state" != "missing" ]]; then
       az acr token delete --name "$acr_token_name" --registry "$acr_name" --subscription "$subscription_id" \
         --yes --output none
       info "Deleted ACR token $acr_token_name"

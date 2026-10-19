@@ -2,7 +2,7 @@
 title: Optional Azure Access for the Local OSMO Profile
 description: Let local OSMO workflows and the local dataviewer use Azure ML tracking, Blob Storage, and ACR images through Arc workload identity
 author: Microsoft Robotics-AI Team
-ms.date: 2026-10-16
+ms.date: 2026-10-19
 ms.topic: how-to
 keywords:
   - local-profile
@@ -56,9 +56,13 @@ infrastructure/local/enable-azure-access.sh \
 
 The dataviewer and ACR options are optional. The plan stops when the active `az` account is another tenant or subscription, or when the Arc cluster does not have workload identity enabled. It shows each federated credential and the ACR token as present or missing, lists each identity's roles, and warns when a needed role is absent. `--config-preview` prints the derived names without calling Azure.
 
+An existing ACR token counts as present only when it holds the registry's built-in `_repositories_pull` scope map and is enabled. The plan flags any other token for inspection, and it stops when it cannot read the token's scope map or status.
+
 ## Apply and Switch the Cluster
 
-Add `--apply` to create the missing federated credentials and the ACR token. The script stores the token in the local OSMO as the REGISTRY credential `acr-<registry>`, passing its password through file descriptors so it never appears in arguments or output. It stops without changes when a credential of the same name trusts a different issuer, subject, or audience. Rerunning `--apply` issues a new token password.
+Add `--apply` to create the missing federated credentials and the ACR token. The script stores the token in the local OSMO as the REGISTRY credential `acr-<registry>`, passing its password through file descriptors so it never appears in arguments or output. It stops without changes when a credential of the same name trusts a different issuer, subject, or audience, or when the ACR token is not pull-only or is disabled.
+
+When the ACR token is not pull-only or is disabled, a password already stored in the local OSMO stays as it was and may still work. Inspect the token, or use `--remove` to delete both the token and the stored credential. Rerunning `--apply` on a pull-only token issues a new token password.
 
 The cluster uses the identities only after you redeploy with the commands the script prints:
 

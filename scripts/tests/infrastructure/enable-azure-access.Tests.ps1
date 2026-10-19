@@ -46,9 +46,22 @@ case "$*" in
     [[ "$state" == mismatch ]] && subject="system:serviceaccount:other:other"
     printf '{"issuer":"https://oidc.example/issuer","subject":"%s","audiences":["api://AzureADTokenExchange"]}\n' "$subject" ;;
   "role assignment list"*) printf '%s\n' "${AZ_ROLES:-AzureML Data Scientist;Storage Blob Data Contributor}" | tr ';' '\n' ;;
-  "acr show"*) echo 'exampleacr.azurecr.io' ;;
+  "acr show"*)
+    printf '{"id":"/subscriptions/%s/resourceGroups/rg-example/providers/Microsoft.ContainerRegistry/registries/exampleacr","loginServer":"exampleacr.azurecr.io"}\n' "$AZ_SUBSCRIPTION" ;;
   "acr token show"*)
-    if [[ "${AZ_TOKEN_STATE:-missing}" == missing ]]; then echo 'ERROR: (ResourceNotFound) Not found' >&2; exit 3; fi ;;
+    state="${AZ_TOKEN_STATE:-missing}"
+    if [[ "$state" == missing ]]; then echo 'ERROR: (ResourceNotFound) Not found' >&2; exit 3; fi
+    if [[ "$state" == error ]]; then echo 'ERROR: (AuthorizationFailed) Forbidden' >&2; exit 1; fi
+    if [[ "$state" == unreadable ]]; then echo '{"scopeMapId":null,"status":null}'; exit 0; fi
+    registry="/subscriptions/$AZ_SUBSCRIPTION/resourceGroups/rg-example/providers/Microsoft.ContainerRegistry/registries/exampleacr"
+    scope_map=_repositories_pull status=enabled
+    case "$state" in
+      push) scope_map=_repositories_push ;;
+      admin) scope_map=_repositories_admin ;;
+      disabled) status=disabled ;;
+      uppercase) registry=$(printf '%s' "$registry" | tr '[:lower:]' '[:upper:]') ;;
+    esac
+    printf '{"scopeMapId":"%s/scopeMaps/%s","status":"%s"}\n' "$registry" "$scope_map" "$status" ;;
   "acr token create"*) echo '{"credentials":{"passwords":[{"name":"password1","value":"created-token-secret"}]}}' ;;
   "acr token credential generate"*) echo '{"passwords":[{"name":"password1","value":"rotated-token-secret"}]}' ;;
   *) exit 0 ;;
@@ -163,6 +176,25 @@ Describe 'enable-azure-access.sh plan' -Tag 'Unit' -Skip:(-not $script:ToolsPres
         $result.StdErr | Should -Match ([regex]::Escape($Message))
         (Get-WriteCalls -Calls $result.Calls).Count | Should -Be 0
     }
+
+    It 'Reports a token that is not pull-only and changes nothing' {
+        $result = Invoke-AzureAccess -Arguments @('--acr-name', 'exampleacr') -ExtraEnv @{ AZ_TOKEN_STATE = 'push' }
+
+        $result.ExitCode | Should -Be 0
+        $result.StdOut | Should -Match 'ACR Pull Token:\s+osmo-local-[0-9a-f]{16} on exampleacr\.azurecr\.io: not pull-only or disabled; inspect it before applying'
+        (Get-WriteCalls -Calls $result.Calls).Count | Should -Be 0
+    }
+
+    It 'Stops when the ACR token <Case>' -ForEach @(
+        @{ Case = 'cannot be read'; State = 'error'; Message = 'Unable to read ACR token osmo-local-' }
+        @{ Case = 'scope map and status cannot be read'; State = 'unreadable'; Message = 'Unable to read the scope map and status of ACR token' }
+    ) {
+        $result = Invoke-AzureAccess -Arguments @('--apply', '--acr-name', 'exampleacr') -ExtraEnv @{ AZ_TOKEN_STATE = $State }
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdErr | Should -Match ([regex]::Escape($Message))
+        (Get-WriteCalls -Calls $result.Calls).Count | Should -Be 0
+    }
 }
 
 Describe 'enable-azure-access.sh apply and remove' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
@@ -191,6 +223,42 @@ Describe 'enable-azure-access.sh apply and remove' -Tag 'Unit' -Skip:(-not $scri
         @($result.Calls | Where-Object { $_ -match 'federated-credential create|acr token create' }).Count | Should -Be 0
         @($result.Calls | Where-Object { $_ -match '^az acr token credential generate .*--password1 --expiration-in-days 30' }).Count | Should -Be 1
         Get-Content -Path (Join-Path $result.WorkDir 'osmo-auth.txt') -Raw | Should -Be 'rotated-token-secret'
+    }
+
+    It 'Treats a pull-only scope map that differs only in letter case as present' {
+        $result = Invoke-AzureAccess -Arguments @('--apply', '--acr-name', 'exampleacr') `
+            -ExtraEnv @{ AZ_CREDENTIAL_STATE = 'present'; AZ_TOKEN_STATE = 'uppercase' }
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        @($result.Calls | Where-Object { $_ -match '^az acr token credential generate ' }).Count | Should -Be 1
+    }
+
+    It 'Refuses to issue a password for a token that is <Case>, and changes nothing' -ForEach @(
+        @{ Case = 'scoped to pushes'; State = 'push' }
+        @{ Case = 'scoped to every repository operation, including deletes'; State = 'admin' }
+        @{ Case = 'disabled'; State = 'disabled' }
+    ) {
+        $result = Invoke-AzureAccess -Arguments (@('--apply') + $script:Optional) -ExtraEnv @{ AZ_TOKEN_STATE = $State }
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdErr | Should -Match 'is not limited to pulls from this registry, or is disabled; nothing was changed'
+        $result.StdErr | Should -Match 'stored in the local OSMO is unchanged and may still work'
+        $result.StdErr | Should -Match 'run --remove to delete the token and the stored credential'
+        (Get-WriteCalls -Calls $result.Calls).Count | Should -Be 0
+        @($result.Calls | Where-Object { $_ -match '^osmo ' }).Count | Should -Be 0
+        Test-Path -Path (Join-Path $result.WorkDir 'osmo-auth.txt') | Should -BeFalse
+    }
+
+    It 'Removes an ACR token whose <Case>' -ForEach @(
+        @{ Case = 'scope drifted'; State = 'push' }
+        @{ Case = 'scope map and status cannot be read'; State = 'unreadable' }
+    ) {
+        $result = Invoke-AzureAccess -Arguments @('--remove', '--acr-name', 'exampleacr') `
+            -ExtraEnv @{ AZ_CREDENTIAL_STATE = 'present'; AZ_TOKEN_STATE = $State; OSMO_CREDENTIALS = 'acr-exampleacr REGISTRY' }
+
+        $result.ExitCode | Should -Be 0 -Because $result.StdErr
+        @($result.Calls | Where-Object { $_ -match '^az acr token delete --name osmo-local-[0-9a-f]{16} --registry exampleacr .*--yes' }).Count | Should -Be 1
+        $result.Calls | Should -Contain 'osmo credential delete acr-exampleacr'
     }
 
     It 'Refuses to apply over a credential with a different subject' {
