@@ -132,7 +132,8 @@ BeforeAll {
     function Invoke-SubmitWithStubbedOsmo {
         param(
             [Parameter(Mandatory)][string]$ScriptPath,
-            [Parameter(Mandatory)][string[]]$Arguments
+            [Parameter(Mandatory)][string[]]$Arguments,
+            [hashtable]$ExtraEnv = @{}
         )
 
         $workDir = Join-Path $script:ArtifactsRoot ([System.Guid]::NewGuid().ToString('N'))
@@ -140,10 +141,12 @@ BeforeAll {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
         $gatewayIp = '10.43.250.20'
         Set-Content -Path (Join-Path $configDir 'login.yaml') -Value "url: http://$gatewayIp"
-        $envVars = Get-SubmitEnvironment -ExtraEnv @{
+        $submitEnv = @{
             LOCAL_OSMO_CONFIG_DIR         = $configDir
             LOCAL_OSMO_GATEWAY_CLUSTER_IP = $gatewayIp
         }
+        foreach ($key in $ExtraEnv.Keys) { $submitEnv[$key] = $ExtraEnv[$key] }
+        $envVars = Get-SubmitEnvironment -ExtraEnv $submitEnv
         $stubs = @{
             'terraform' = 'exit 1'
             'az'        = 'exit 1'
@@ -306,6 +309,49 @@ Describe 'Evaluation policy sources at submission' -Tag 'Unit' -Skip:(-not $scri
 
         $result.ExitCode | Should -Not -Be 0
         $result.StdErr | Should -Match '--policy-uri needs a tracking backend'
+    }
+
+    Context 'Azure ML registry policy with logging and registration off' {
+        BeforeAll {
+            $script:PolicyUriArgs = @('--profile', 'local', '--policy-uri', 'models:/so101-act/2', '--local-dataset', 'so101/pick')
+            $script:NoLogging = @{ TRACKING_BACKEND = 'azureml'; MLFLOW_ENABLE = ''; REGISTER_MODEL = '' }
+            $script:Workspace = @{
+                AZURE_SUBSCRIPTION_ID  = '00000000-0000-0000-0000-000000000000'
+                AZURE_RESOURCE_GROUP   = 'rg-example'
+                AZUREML_WORKSPACE_NAME = 'mlw-example'
+            }
+        }
+
+        It 'Forwards the Azure workspace the policy download needs' -Skip:(-not $script:ArchiveToolsPresent) {
+            $result = Invoke-SubmitWithStubbedOsmo -ScriptPath 'evaluation/sil/scripts/submit-osmo-lerobot-eval.sh' `
+                -Arguments $script:PolicyUriArgs -ExtraEnv ($script:NoLogging + $script:Workspace)
+
+            $result.ExitCode | Should -Be 0 -Because $result.StdErr
+            $submit = @($result.Calls | Where-Object { $_ -match '^osmo workflow submit ' })
+            $submit.Count | Should -Be 1
+            $submit[0] | Should -Match ' policy_uri=models:/so101-act/2( |$)'
+            $submit[0] | Should -Match ' azure_subscription_id=00000000-0000-0000-0000-000000000000( |$)'
+            $submit[0] | Should -Match ' azure_resource_group=rg-example( |$)'
+            $submit[0] | Should -Match ' azure_workspace_name=mlw-example( |$)'
+            $submit[0] | Should -Not -Match 'mlflow_enable=true'
+        }
+
+        It 'Shows the Azure workspace in the preview' {
+            $result = Invoke-SubmitPreview -ScriptPath 'evaluation/sil/scripts/submit-osmo-lerobot-eval.sh' `
+                -Arguments $script:PolicyUriArgs -ExtraEnv ($script:NoLogging + $script:Workspace)
+
+            $result.ExitCode | Should -Be 0 -Because $result.StdErr
+            $result.StdOut | Should -Match 'Workspace:\s+mlw-example'
+        }
+
+        It 'Stops before submitting when the workspace is not set' {
+            $result = Invoke-SubmitWithStubbedOsmo -ScriptPath 'evaluation/sil/scripts/submit-osmo-lerobot-eval.sh' `
+                -Arguments $script:PolicyUriArgs -ExtraEnv $script:NoLogging
+
+            $result.ExitCode | Should -Not -Be 0
+            $result.StdErr | Should -Match 'Azure subscription ID required for the model registry, MLflow, or --policy-uri'
+            @($result.Calls | Where-Object { $_ -match '^osmo (workflow submit|data upload) ' }).Count | Should -Be 0
+        }
     }
 }
 

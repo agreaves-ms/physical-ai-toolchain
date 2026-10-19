@@ -308,15 +308,17 @@ hub_source=false
 [[ -n "$dataset_repo_id" ]] && hub_source=true
 [[ -n "$policy_repo_id" && "$policy_repo_id" != /* && "$from_aml_model" != "true" ]] && hub_source=true
 
-# The AzureML registry and AzureML tracking need the workspace; other tracking backends do not.
+# The AzureML registry, AzureML tracking, and policies downloaded through AzureML tracking need the workspace;
+# other tracking backends do not.
 needs_workspace=false
 [[ "$from_aml_model" == "true" ]] && needs_workspace=true
 [[ -n "$register_model" && "$PROFILE_TRACKING_BACKEND" == "azureml" ]] && needs_workspace=true
 [[ "$mlflow_enable" == "true" && "$PROFILE_TRACKING_BACKEND" == "azureml" ]] && needs_workspace=true
+[[ -n "$policy_uri" && "$PROFILE_TRACKING_BACKEND" == "azureml" ]] && needs_workspace=true
 if [[ "$needs_workspace" == "true" ]]; then
-  [[ -z "$subscription_id" ]] && fatal "Azure subscription ID required for model registry / MLflow"
-  [[ -z "$resource_group" ]] && fatal "Azure resource group required for model registry / MLflow"
-  [[ -z "$workspace_name" ]] && fatal "Azure ML workspace name required for model registry / MLflow"
+  [[ -z "$subscription_id" ]] && fatal "Azure subscription ID required for the model registry, MLflow, or --policy-uri"
+  [[ -z "$resource_group" ]] && fatal "Azure resource group required for the model registry, MLflow, or --policy-uri"
+  [[ -z "$workspace_name" ]] && fatal "Azure ML workspace name required for the model registry, MLflow, or --policy-uri"
 fi
 [[ -n "$register_model" && "$PROFILE_TRACKING_BACKEND" != "azureml" ]] \
   && fatal "--register-model registers to Azure ML; it needs TRACKING_BACKEND=azureml"
