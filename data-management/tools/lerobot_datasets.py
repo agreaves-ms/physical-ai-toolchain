@@ -169,10 +169,14 @@ def _read_json_no_follow(path: Path) -> dict | None:
     """
     if not (path.is_symlink() or path.exists()):
         return None
-    with open(_open_no_follow(path), "rb") as reader:
-        if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+    descriptor = _open_no_follow(path)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise DatasetError(f"{path} is not a regular file")
-        return json.loads(reader.read().decode("utf-8"))
+        with open(descriptor, "rb", closefd=False) as reader:
+            return json.loads(reader.read().decode("utf-8"))
+    finally:
+        os.close(descriptor)
 
 
 def select_episodes(source: SourceDataset, *, include_unvalidated: bool = False) -> EpisodeSelection:
