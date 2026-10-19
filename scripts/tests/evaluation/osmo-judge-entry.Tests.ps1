@@ -93,7 +93,7 @@ Describe 'osmo-judge-entry.sh' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
         $result.ExitCode | Should -Be 0 -Because $result.StdErr
         ($result.Calls | Where-Object { $_ -match '^uv sync ' }) | Should -Match '--extra qwen3-vl$'
         $run = $result.Calls | Where-Object { $_ -match '^python -m evaluation\.vlm_judge\.run ' }
-        $run | Should -Match '--dataset \S+/judge-input --output \S+/output/judgments\.jsonl --backend qwen3-vl'
+        $run | Should -Match '--dataset \S+/judge-input --output \S+/output/judgments\.partial\.jsonl --backend qwen3-vl'
         $run | Should -Match '--model-revision ebb281ec70b05090aa6165b016eac8ec08e71b17'
         $run | Should -Match '--limit 2'
         $result.StdOut | Should -Match 'JUDGE_RESULT=episodes=1 successes=1 mean_confidence=0\.900'
@@ -146,6 +146,19 @@ Describe 'osmo-judge-entry.sh' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
 
         $result.ExitCode | Should -Not -Be 0
         $result.StdErr | Should -Match 'incomplete verdict for ds/episode_000000'
+        $result.StdErr | Should -Match 'failed their check; they stay in judgments\.partial\.jsonl'
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.partial.jsonl') | Should -BeTrue
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeFalse
+    }
+
+    It 'fails when a verdict has no outcome' {
+        $result = Invoke-JudgeEntry -LeRobotInput -EnvVars @{
+            FAKE_VERDICT = '{"episode_id": "ds/episode_000000", "outcome_confidence": 0.9, "progress_per_frame": [0, 100]}'
+        }
+
+        $result.ExitCode | Should -Not -Be 0
+        $result.StdErr | Should -Match 'incomplete verdict for ds/episode_000000'
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeFalse
     }
 
     It 'fails when an outcome is not true, false, or null' {
@@ -178,6 +191,7 @@ Describe 'osmo-judge-entry.sh' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
         $result.ExitCode | Should -Be 0 -Because $result.StdErr
         $result.StdOut | Should -Match 'JUDGE_RESULT=episodes=1 successes=0 mean_confidence=0\.800 inconclusive=0'
         Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeTrue
+        Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.partial.jsonl') | Should -BeFalse
     }
 
     It 'requires the rollout judge to judge every selected rollout' {
@@ -199,7 +213,7 @@ Describe 'osmo-judge-entry.sh' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
 
         $result.ExitCode | Should -Not -Be 0
         $result.StdOut | Should -Match 'JUDGE_RESULT=episodes=1 successes=1'
-        $result.StdErr | Should -Match 'could not judge every selected input \(exit 1\)'
+        $result.StdErr | Should -Match 'could not judge every selected input \(exit 1\); the verdicts it wrote are in judgments\.partial\.jsonl'
         Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.partial.jsonl') | Should -BeTrue
         Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeFalse
     }
@@ -209,7 +223,7 @@ Describe 'osmo-judge-entry.sh' -Tag 'Unit' -Skip:(-not $script:ToolsPresent) {
 
         $result.ExitCode | Should -Not -Be 0
         $result.StdErr | Should -Match 'the judge wrote no verdicts'
-        $result.StdErr | Should -Match 'could not judge every selected input \(exit 1\)'
+        $result.StdErr | Should -Match 'could not judge every selected input \(exit 1\) and wrote no verdicts'
         Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.jsonl') | Should -BeFalse
         Test-Path -Path (Join-Path $result.WorkDir 'output/judgments.partial.jsonl') | Should -BeFalse
     }

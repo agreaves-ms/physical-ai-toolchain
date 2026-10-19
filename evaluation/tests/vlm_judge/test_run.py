@@ -59,9 +59,9 @@ def test_given_an_episode_that_cannot_be_judged_when_scoring_then_fails_and_keep
     result = inference.main([*_arguments(jsonl_dataset), "--indices", "0,1"])
 
     # Assert
-    rows = (jsonl_dataset / "results.jsonl").read_text().splitlines()
+    rows = [json.loads(line) for line in (jsonl_dataset / "results.jsonl").read_text().splitlines()]
     assert result == 1
-    assert len(rows) == 1
+    assert [row["episode_id"] for row in rows] == ["dataset/episode_000000"]
 
 
 def test_given_a_complete_batch_with_a_failed_outcome_when_scoring_then_succeeds(

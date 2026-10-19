@@ -62,8 +62,11 @@ uv sync --active --frozen --no-config --no-install-project --project "${JUDGE_PR
 
 mkdir -p "${OUTPUT_DIR}"
 JUDGMENTS="${OUTPUT_DIR}/judgments.jsonl"
+# The judge writes under a partial name; only a complete, checked batch is promoted to judgments.jsonl, so a
+# failed, interrupted, or killed run never leaves a file that looks complete.
+PARTIAL_JUDGMENTS="${OUTPUT_DIR}/judgments.partial.jsonl"
 judge_args=(
-  --output "${JUDGMENTS}"
+  --output "${PARTIAL_JUDGMENTS}"
   --backend "${JUDGE_BACKEND}"
   --model-id "${JUDGE_MODEL_ID}"
   --n-frames "${JUDGE_N_FRAMES}"
@@ -90,7 +93,7 @@ fi
 # Every verdict must carry an outcome (true, false, or null for an inconclusive tie), a confidence, and per-frame
 # progress. The check also runs after a judge failure, so the log reports whatever verdicts were written.
 check_status=0
-python - "${JUDGMENTS}" << 'CHECK_VERDICTS' || check_status=$?
+python - "${PARTIAL_JUDGMENTS}" << 'CHECK_VERDICTS' || check_status=$?
 import json
 import math
 import sys
@@ -126,11 +129,17 @@ for record in records:
     print(f"  {record['episode_id']}: success={outcome} confidence={record['outcome_confidence']:.3f}")
 CHECK_VERDICTS
 
-# A failed batch keeps its verdicts for diagnosis under a name no consumer reads as a complete batch.
 if (( judge_status != 0 )); then
-  [[ -f "${JUDGMENTS}" ]] && mv "${JUDGMENTS}" "${OUTPUT_DIR}/judgments.partial.jsonl"
-  echo "ERROR: the judge could not judge every selected input (exit ${judge_status}); verdicts it wrote are in judgments.partial.jsonl" >&2
+  if [[ -f "${PARTIAL_JUDGMENTS}" ]]; then
+    echo "ERROR: the judge could not judge every selected input (exit ${judge_status}); the verdicts it wrote are in judgments.partial.jsonl" >&2
+  else
+    echo "ERROR: the judge could not judge every selected input (exit ${judge_status}) and wrote no verdicts" >&2
+  fi
   exit 1
 fi
-(( check_status == 0 )) || exit "${check_status}"
+if (( check_status != 0 )); then
+  echo "ERROR: the judge's verdicts failed their check; they stay in judgments.partial.jsonl" >&2
+  exit "${check_status}"
+fi
+mv "${PARTIAL_JUDGMENTS}" "${JUDGMENTS}"
 echo "=== VLM Judge Complete: ${JUDGMENTS} ==="
