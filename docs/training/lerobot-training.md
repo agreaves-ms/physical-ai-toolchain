@@ -3,7 +3,7 @@ sidebar_position: 5
 title: LeRobot Training
 description: Behavioral cloning with ACT and Diffusion policies and SmolVLA fine-tuning on Azure ML, OSMO, and the local OSMO profile
 author: Microsoft Robotics-AI Team
-ms.date: 2026-10-14
+ms.date: 2026-10-19
 ms.topic: how-to
 keywords:
   - lerobot
@@ -29,17 +29,19 @@ LeRobot behavioral cloning training for ACT and Diffusion policy architectures, 
 
 ## 🚀 Quick Start
 
+Run the commands in this guide from the repository root.
+
 ### Azure ML
 
 ```bash
-./scripts/submit-azureml-lerobot-training.sh \
+./training/il/scripts/submit-azureml-lerobot-training.sh \
   -d lerobot/aloha_sim_insertion_human
 ```
 
 ### OSMO
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   -d lerobot/aloha_sim_insertion_human
 ```
 
@@ -48,7 +50,7 @@ LeRobot behavioral cloning training for ACT and Diffusion policy architectures, 
 Train from a dataset in the workstation's datasets directory and track the run in the local MLflow server:
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   --profile local \
   --local-dataset my-learner-dataset \
   -r my-act-policy
@@ -61,7 +63,7 @@ See [Local Datasets](#local-datasets-osmo-local-profile) for preparing datasets.
 Train, evaluate, and register in one command:
 
 ```bash
-./scripts/run-lerobot-pipeline.sh \
+./training/pipelines/run-lerobot-pipeline.sh \
   -d lerobot/aloha_sim_insertion_human \
   --policy-repo-id user/my-act-policy \
   -r my-act-model
@@ -81,13 +83,13 @@ Select the architecture with `--policy-type`:
 
 ```bash
 # ACT policy (default)
-./scripts/submit-osmo-lerobot-training.sh -d user/dataset -p act
+./training/il/scripts/submit-osmo-lerobot-training.sh -d user/dataset -p act
 
 # Diffusion policy
-./scripts/submit-osmo-lerobot-training.sh -d user/dataset -p diffusion
+./training/il/scripts/submit-osmo-lerobot-training.sh -d user/dataset -p diffusion
 
 # SmolVLA fine-tuning (OSMO)
-./scripts/submit-osmo-lerobot-training.sh -d user/dataset -p smolvla
+./training/il/scripts/submit-osmo-lerobot-training.sh -d user/dataset -p smolvla
 
 # GR00T-N1.5 fine-tuning (VLA — separate script)
 ./training/vla/scripts/submit-osmo-lerobot-vla-fine-tuning.sh \
@@ -143,7 +145,7 @@ Select the architecture with `--policy-type`:
 Single-node multi-GPU training launches `accelerate` with one process per visible GPU. Request the GPU count with `--num-gpus` and select a `--platform` whose node pool exposes at least that many GPUs:
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   -d user/my-dataset \
   --num-gpus 2 \
   --platform gpu_platform_2x \
@@ -157,7 +159,7 @@ The cluster must provide a node pool with a multi-GPU SKU and a matching OSMO pl
 Pass the pretrained policy as `--policy-path`. A Hub repository needs the commit SHA that pins it, because LeRobot's `--policy.path` takes no revision; the job downloads that snapshot and fine-tunes from it. A path inside the container needs no revision.
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   -d user/my-dataset \
   --policy-path user/pretrained-act \
   --policy-path-revision "<policy-commit-sha>" \
@@ -172,7 +174,7 @@ Pass the pretrained policy as `--policy-path`. A Hub repository needs the commit
 The base model expects camera features named `observation.images.camera1` through `camera3`. Map the dataset's cameras onto those names with `--rename-map`; SmolVLA leaves out any camera the dataset lacks:
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   --profile local \
   --local-dataset my-learner-dataset \
   -p smolvla \
@@ -255,7 +257,7 @@ Supported dataset delivery differs by platform.
 LeRobot downloads datasets from HuggingFace Hub at runtime. Specify datasets with `--dataset-repo-id`:
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   -d lerobot/aloha_sim_insertion_human
 ```
 
@@ -264,7 +266,7 @@ LeRobot downloads datasets from HuggingFace Hub at runtime. Specify datasets wit
 Train from direct Azure Blob URLs using OSMO workload identity. Blob submissions do not require a HuggingFace dataset repository; the script defaults the local dataset ID to `dataset`.
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   --blob-url "https://mystorageaccount.blob.core.windows.net/training/pusht" \
   -r pusht-model
 ```
@@ -272,7 +274,7 @@ Train from direct Azure Blob URLs using OSMO workload identity. Blob submissions
 Use multiple `--blob-url` values to merge compatible datasets before training:
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   --blob-url "https://account1.blob.core.windows.net/train/set1" \
   --blob-url "https://account2.blob.core.windows.net/train/set2" \
   -r merged-pusht-model
@@ -286,7 +288,7 @@ Use multiple `--blob-url` values to merge compatible datasets before training:
 On the [local OSMO profile](https://github.com/microsoft/physical-ai-toolchain/blob/main/infrastructure/local/README.md), every task mounts the workstation's datasets directory read-only at `/mnt/datasets`. Pass a dataset folder name with `--local-dataset`, and the job trains from `/mnt/datasets/<name>` without a download:
 
 ```bash
-./scripts/submit-osmo-lerobot-training.sh \
+./training/il/scripts/submit-osmo-lerobot-training.sh \
   --profile local \
   --local-dataset my-learner-dataset
 ```
@@ -300,7 +302,7 @@ Train directly from Azure Blob Storage datasets using managed identity authentic
 #### Single Dataset
 
 ```bash
-./scripts/submit-azureml-lerobot-training.sh \
+./training/il/scripts/submit-azureml-lerobot-training.sh \
   --blob-url "https://mystorageaccount.blob.core.windows.net/training/pusht" \
   -r pusht-model
 ```
@@ -310,7 +312,7 @@ Train directly from Azure Blob Storage datasets using managed identity authentic
 Combine datasets from different containers or storage accounts:
 
 ```bash
-./scripts/submit-azureml-lerobot-training.sh \
+./training/il/scripts/submit-azureml-lerobot-training.sh \
   --blob-url "https://account1.blob.core.windows.net/train/set1" \
   --blob-url "https://account1.blob.core.windows.net/train/set2" \
   -r merged-pusht-model
@@ -323,7 +325,7 @@ LeRobot automatically validates dataset compatibility and merges them before tra
 Use registered AzureML data assets, mounted read-only into the training container via AzureML's native `ro_mount` mechanism. No download step is required — datasets are available immediately at a FUSE mount path.
 
 ```bash
-./scripts/submit-azureml-lerobot-training.sh \
+./training/il/scripts/submit-azureml-lerobot-training.sh \
   --dataset-asset azureml:pusht-episodes:3 \
   -r pusht-model
 ```
@@ -331,7 +333,7 @@ Use registered AzureML data assets, mounted read-only into the training containe
 Multiple data assets can be merged:
 
 ```bash
-./scripts/submit-azureml-lerobot-training.sh \
+./training/il/scripts/submit-azureml-lerobot-training.sh \
   --dataset-asset azureml:episodes-day1:2 \
   --dataset-asset azureml:episodes-day2:1 \
   -r merged-model
@@ -344,7 +346,7 @@ The data asset URI must be version-pinned (`azureml:NAME:VERSION` or the full AR
 Data assets and blob URLs can be combined. All sources are merged automatically via `lerobot-edit-dataset`:
 
 ```bash
-./scripts/submit-azureml-lerobot-training.sh \
+./training/il/scripts/submit-azureml-lerobot-training.sh \
   --dataset-asset azureml:pusht-base:3 \
   --blob-url "https://account.blob.core.windows.net/extra/pusht" \
   -r combined-model
@@ -382,18 +384,18 @@ The `run-lerobot-pipeline.sh` script orchestrates the full lifecycle on OSMO:
 
 ```bash
 # Full pipeline
-./scripts/run-lerobot-pipeline.sh \
+./training/pipelines/run-lerobot-pipeline.sh \
   -d lerobot/aloha_sim_insertion_human \
   --policy-repo-id user/my-policy \
   -r my-model
 
 # Training only with polling (skip inference)
-./scripts/run-lerobot-pipeline.sh \
+./training/pipelines/run-lerobot-pipeline.sh \
   -d user/dataset \
   --skip-inference
 
 # Async mode (submit and exit)
-./scripts/run-lerobot-pipeline.sh \
+./training/pipelines/run-lerobot-pipeline.sh \
   -d user/dataset \
   --skip-wait
 ```
