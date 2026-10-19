@@ -228,6 +228,7 @@ class TestDerive:
 
         assert fake.commands == []
         assert ld.is_dataset(target)
+        assert not any((datasets_dir.parent / ld.STAGING_DIR_NAME).iterdir())
 
     def test_refuses_existing_target(self, datasets_dir: Path, tmp_path: Path) -> None:
         _make_dataset(datasets_dir / "learner")
@@ -435,17 +436,62 @@ class TestLinkRefusal:
         assert not any((datasets_dir.parent / ld.STAGING_DIR_NAME).iterdir())
 
     @pytest.mark.parametrize("drop", [[], ["observation.state"]], ids=["copy", "drop-feature"])
-    def test_derive_refuses_a_link_in_a_used_source(
-        self, datasets_dir: Path, tmp_path: Path, private_dir: Path, drop: list[str]
+    @pytest.mark.parametrize(
+        "add_entry",
+        [_add_file_link, _add_directory_link, _add_internal_link, _add_metadata_link, _add_fifo],
+        ids=["file-link", "directory-link", "internal-link", "metadata-link", "fifo"],
+    )
+    def test_derive_refuses_links_and_special_files(
+        self,
+        datasets_dir: Path,
+        tmp_path: Path,
+        private_dir: Path,
+        add_entry: Callable[[Path, Path], str],
+        drop: list[str],
     ) -> None:
         source = _passing_source(tmp_path / "src")
-        _add_file_link(source, private_dir)
+        entry = add_entry(source, private_dir)
         fake = _FakeEditDataset()
 
-        with pytest.raises(ld.DatasetError, match=re.escape("leak.txt is a symbolic link")):
+        with pytest.raises(ld.DatasetError, match=re.escape(entry)):
             ld.derive(datasets_dir, "leaky", [source], drop_features=drop, run=fake, log=lambda _: None)
 
         assert fake.commands == []
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    @pytest.mark.parametrize("drop", [[], ["observation.state"]], ids=["copy", "drop-feature"])
+    def test_derive_refuses_a_linked_lerobot_directory(
+        self, datasets_dir: Path, tmp_path: Path, drop: list[str]
+    ) -> None:
+        elsewhere = _passing_source(tmp_path / "elsewhere")
+        (elsewhere / "secret.txt").write_bytes(_CANARY)
+        capture = tmp_path / "capture"
+        capture.mkdir()
+        (capture / "lerobot").symlink_to(elsewhere, target_is_directory=True)
+        _write_json(capture / ld.LEDGER_FILE, {"episodes": [{"index": 0, "status": "passed"}]})
+
+        with pytest.raises(ld.DatasetError, match="lerobot is a symbolic link"):
+            ld.derive(datasets_dir, "leaky", [capture], drop_features=drop, run=_FakeEditDataset(), log=lambda _: None)
+
+        _assert_nothing_published(datasets_dir, "leaky")
+
+    @pytest.mark.parametrize("drop", [[], ["observation.state"]], ids=["copy", "drop-feature"])
+    def test_derive_refuses_a_socket(self, datasets_dir: Path, short_tmp: Path, drop: list[str]) -> None:
+        source = _passing_source(short_tmp / "src")
+        server = socket.socket(socket.AF_UNIX)
+        try:
+            try:
+                server.bind(str(source / "sock"))
+            except OSError as error:
+                pytest.skip(f"Cannot bind a UNIX socket here: {error}")
+
+            with pytest.raises(ld.DatasetError, match="sock"):
+                ld.derive(
+                    datasets_dir, "leaky", [source], drop_features=drop, run=_FakeEditDataset(), log=lambda _: None
+                )
+        finally:
+            server.close()
+
         _assert_nothing_published(datasets_dir, "leaky")
 
     def test_derive_refuses_a_link_in_a_source_it_would_skip(
