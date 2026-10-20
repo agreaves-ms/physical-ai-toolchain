@@ -27,7 +27,9 @@ The tool manages a datasets directory that holds one complete LeRobot dataset pe
 
 A source with no sidecar is skipped unless you pass `--include-unvalidated`. Use `--drop-feature` to remove privileged simulation state, such as task phases or object poses, that a learner must not see.
 
-`import` and `derive` copy only regular files and directories. They refuse a source that holds a symbolic link, such as a linked `lerobot/` folder or metadata file, or a special file such as a FIFO, and nothing reaches the datasets directory. This keeps a dataset from pulling other files from the host into the folder every OSMO job reads. To use such a source, replace each link with the file it points to after checking that the file belongs to the dataset.
+`import` and `derive` copy only regular files and directories, so a dataset cannot pull other files from the host into the folder every OSMO job reads. They refuse a dataset that holds a symbolic link, such as a linked metadata file, or a special file such as a FIFO, and a capture directory whose `lerobot/` folder is a link. Nothing reaches the datasets directory when they refuse.
+
+`derive` also refuses a capture sidecar that is a link or not a regular file. Neither command reads or copies the other files in a capture directory, so it does not check them. The source path you pass may itself be a link. To use a refused source, replace each link with the file it points to after checking that the file belongs to the dataset.
 
 #### Derive the UR10e learner dataset
 

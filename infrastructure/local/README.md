@@ -193,9 +193,9 @@ infrastructure/local/datasets.sh derive so101-learner \
   --drop-feature observation.assistance
 ```
 
-The sources stay unchanged. Derivation runs `lerobot-edit-dataset` from the IL LeRobot lock, so its first run downloads that environment, and the new folder appears only after the merge completes.
+The sources stay unchanged. Derivation runs `lerobot-edit-dataset` from the IL LeRobot lock, so its first run downloads that environment, and the new folder appears only after the merge completes. Derivation copies each source into a `.staging` folder beside the datasets directory, and dropping features needs free space for one more copy of the source being processed.
 
-`import` and `derive` refuse a source that holds a symbolic link or a special file, so a dataset cannot bring other host files into the directory every task reads. [Data Management Tools](../../data-management/tools/README.md) describes the selection rules and [the UR10e derivation](../../data-management/tools/README.md#derive-the-ur10e-learner-dataset) for the IL test.
+`import` and `derive` refuse a dataset that holds a symbolic link or a special file, and `derive` refuses a capture sidecar that is one, so a dataset cannot bring other host files into the directory every task reads. [Data Management Tools](../../data-management/tools/README.md) describes the selection rules and [the UR10e derivation](../../data-management/tools/README.md#derive-the-ur10e-learner-dataset) for the IL test.
 
 ## 📤 Submitting Jobs
 
