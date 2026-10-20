@@ -193,6 +193,7 @@ Describe 'enable-azure-access.sh plan' -Tag 'Unit' -Skip:(-not $script:ToolsPres
 
         $result.ExitCode | Should -Not -Be 0
         $result.StdErr | Should -Match ([regex]::Escape($Message))
+        $result.StdErr | Should -Match 'nothing was changed'
         (Get-WriteCalls -Calls $result.Calls).Count | Should -Be 0
     }
 }

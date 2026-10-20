@@ -217,12 +217,12 @@ acr_token_state_of() {
   if ! output=$(az acr token show --name "$acr_token_name" --registry "$acr_name" --subscription "$subscription_id" \
     --query '{scopeMapId: scopeMapId, status: status}' --output json 2>"$work_dir/token-show.err"); then
     grep -Eqi 'ResourceNotFound|NotFound|404' "$work_dir/token-show.err" \
-      || fatal "Unable to read ACR token $acr_token_name on $acr_name"
+      || fatal "Unable to read ACR token $acr_token_name on $acr_name; nothing was changed"
     echo missing
     return 0
   fi
   if ! jq -e '[.scopeMapId, .status] | all(type == "string" and length > 0)' <<< "$output" >/dev/null 2>&1; then
-    [[ "$mode" == "remove" ]] || fatal "Unable to read the scope map and status of ACR token $acr_token_name on $acr_name"
+    [[ "$mode" == "remove" ]] || fatal "Unable to read the scope map and status of ACR token $acr_token_name on $acr_name; nothing was changed"
     echo unreadable
     return 0
   fi

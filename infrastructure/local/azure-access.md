@@ -54,9 +54,9 @@ infrastructure/local/enable-azure-access.sh \
   --acr-name <registry>
 ```
 
-The dataviewer and ACR options are optional. The plan stops when the active `az` account is another tenant or subscription, or when the Arc cluster does not have workload identity enabled. It shows each federated credential and the ACR token as present or missing, lists each identity's roles, and warns when a needed role is absent. `--config-preview` prints the derived names without calling Azure.
+The dataviewer and ACR options are optional. The plan stops when the active `az` account is another tenant or subscription, or when the Arc cluster does not have workload identity enabled. It shows each federated credential as present or missing and the ACR token as present, missing, or not pull-only or disabled, lists each identity's roles, and warns when a needed role is absent. `--config-preview` prints the derived names without calling Azure.
 
-An existing ACR token counts as present only when it holds the registry's built-in `_repositories_pull` scope map and is enabled. The plan flags any other token for inspection, and it stops when it cannot read the token's scope map or status.
+An existing ACR token counts as present only when it holds the registry's built-in `_repositories_pull` scope map and is enabled. The plan flags any other token for inspection, and it stops when it cannot read the token's scope map or status, except with `--remove`, which deletes the token either way.
 
 ## Apply and Switch the Cluster
 
